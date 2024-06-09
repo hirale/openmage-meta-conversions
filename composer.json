@@ -1,0 +1,34 @@
+{
+    "name": "hirale/openmage-meta-conversions",
+    "description": "A module for integrating Meta Conversion API",
+    "type": "magento-module",
+    "license": "OSL-3.0",
+    "keywords": [
+        "magento",
+        "magento1",
+        "openmage"
+    ],
+    "require": {
+        "php": "^8.0",
+        "magento-hackathon/magento-composer-installer": "*",
+        "facebook/php-business-sdk": "*",
+        "hirale/openmage-redis-queue": "*"
+    },
+    "authors": [
+        {
+            "name": "Hirale"
+        }
+    ],
+    "extra": {
+        "map": [
+            [
+                "src/app/etc/modules/Hirale_MetaConversions.xml",
+                "app/etc/modules/Hirale_MetaConversions.xml"
+            ],
+            [
+                "src/app/code/community/Hirale/MetaConversions",
+                "app/code/community/Hirale/MetaConversions"
+            ]
+        ]
+    }
+}

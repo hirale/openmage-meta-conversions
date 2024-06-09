@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<config>
+    <modules>
+        <Hirale_MetaConversions>
+            <active>true</active>
+            <codePool>community</codePool>
+            <depends>
+                <Mage_GoogleAnalytics />
+            </depends>
+        </Hirale_MetaConversions>
+    </modules>
+</config>
