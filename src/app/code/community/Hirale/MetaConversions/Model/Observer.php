@@ -210,10 +210,14 @@ class Hirale_MetaConversions_Model_Observer
             $event['event_id'] = $this->helper->getEventId();
             $this->addToQueue($event, $userData, $customData);
         }
-        $event['event_name'] = 'PageView';
-        $event['event_id'] = $this->helper->getEventId();
-        $this->addToQueue($event, $userData);
-
+        $response = $observer->getEvent()->getApp()->getResponse();
+        $body = substr($response->getBody(), 0, 100);
+        $statusCode = $response->getHttpResponseCode();
+        if (strpos($body, '<!DOCTYPE html') !== false && $statusCode == 200) {
+            $event['event_name'] = 'PageView';
+            $event['event_id'] = $this->helper->getEventId();
+            $this->addToQueue($event, $userData);
+        }
     }
 
     /**
