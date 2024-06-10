@@ -9,8 +9,24 @@ If you are using javascript to send pixel events, You can get event_id like this
 ``` php
 Mage::helper('metaconversions')->getEventId();
 ```
+## Supported Events
+
+ - `AddToCart`
+ - `AddToWishlist`
+ - `CompleteRegistration`
+ - `InitiateCheckout`
+ - `Purchase`
+ - `Search`
+ - `ViewContent`
+ - `PageView`
+ - `ViewCart`
+
+You can check more events in the [events section](https://developers.facebook.com/docs/meta-pixel/reference#standard-events).
 
 ## Install
+
+> [!NOTE]
+> This module depends on [`openmage-redis-queue`](https://github.com/hirale/openmage-redis-queue). It has been added to composer requirements.
 
 ### Install with [Magento Composer Installer](https://github.com/Cotya/magento-composer-installer)
 
