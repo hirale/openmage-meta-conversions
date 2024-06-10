@@ -49,6 +49,19 @@
                                 <enabled>1</enabled>
                             </depends>
                         </access_token>
+                        <debug_mode translate="label">
+                            <label>Debug Mode</label>
+                            <frontend_type>select</frontend_type>
+                            <source_model>adminhtml/system_config_source_yesno</source_model>
+                            <sort_order>40</sort_order>
+                            <show_in_default>1</show_in_default>
+                            <show_in_website>1</show_in_website>
+                            <show_in_store>1</show_in_store>
+                            <depends>
+                                <enabled>1</enabled>
+                            </depends>
+                            <comment>When in debug mode, all requests and responses will be logged, check system.log for more details.</comment>
+                        </debug_mode>
                     </fields>
                 </conversions>
             </groups>

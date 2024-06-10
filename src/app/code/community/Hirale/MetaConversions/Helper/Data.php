@@ -1,7 +1,6 @@
 <?php
 
 use FacebookAds\Object\ServerSide\ActionSource;
-use FacebookAds\Object\ServerSide\UserData;
 use FacebookAds\Object\ServerSide\Content;
 use FacebookAds\Object\ServerSide\Gender;
 
@@ -10,6 +9,7 @@ class Hirale_MetaConversions_Helper_Data extends Mage_Core_Helper_Abstract
     protected $_isConversionsEnabled = null;
     protected $_accessToken = null;
     protected $_pixelId = null;
+    protected $_isDebugMode = null;
     protected $session;
 
     public function __construct()
@@ -22,6 +22,13 @@ class Hirale_MetaConversions_Helper_Data extends Mage_Core_Helper_Abstract
             $this->_isConversionsEnabled = Mage::getStoreConfig('meta/conversions/enabled');
         }
         return $this->_isConversionsEnabled;
+    }
+
+    public function isDebugMode(){
+        if (is_null($this->_isDebugMode)) {
+            $this->_isDebugMode = Mage::getStoreConfig('meta/conversions/debug_mode');
+        }
+        return $this->_isDebugMode;
     }
 
     public function getAccessToken()

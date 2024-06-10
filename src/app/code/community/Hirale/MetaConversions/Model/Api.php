@@ -18,7 +18,7 @@ class Hirale_MetaConversions_Model_Api implements Hirale_Queue_Model_TaskHandler
     public function handle($task)
     {
         $event = $task['data']['event'];
-        Api::init(null, null, $this->helper->getAccessToken());
+        Api::init(null, null, $this->helper->getAccessToken(), false);
         $api = Api::instance();
         $api->setLogger(new CurlLogger());
         $pixelId = $this->helper->getPixelId();
@@ -37,6 +37,10 @@ class Hirale_MetaConversions_Model_Api implements Hirale_Queue_Model_TaskHandler
         }
         $request = new EventRequest($pixelId);
         $request->setEvents([$event]);
-        $request->execute();
+        $response = $request->execute();
+        if ($this->helper->isDebugMode()) {
+            Mage::log($event);
+            Mage::log($response);
+        }
     }
 }
