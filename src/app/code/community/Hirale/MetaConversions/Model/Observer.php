@@ -1,14 +1,18 @@
 <?php
+use Jaybizzle\CrawlerDetect\CrawlerDetect;
+
 class Hirale_MetaConversions_Model_Observer
 {
     protected $helper;
     protected $gaHelper;
     protected $queue;
+    protected $CrawlerDetect;
     public function __construct(
     ) {
         $this->helper = Mage::helper('metaconversions');
         $this->gaHelper = Mage::helper('googleanalytics');
         $this->queue = Mage::getModel('hirale_queue/task');
+        $this->CrawlerDetect = new CrawlerDetect();
     }
 
 
@@ -31,6 +35,18 @@ class Hirale_MetaConversions_Model_Observer
         }
     }
 
+    protected function isBot()
+    {
+        return $this->CrawlerDetect->isCrawler(Mage::helper('core/http')->getHttpUserAgent());
+    }
+
+    protected function canSend()
+    {
+        if ($this->helper->isConversionsEnabled() && !$this->isBot()) {
+            return true;
+        }
+        return false;
+    }
     /**
      * Observe the "sales_quote_item_save_after" event and add the product to the queue for processing.
      *
@@ -39,7 +55,7 @@ class Hirale_MetaConversions_Model_Observer
 
     public function addToCart(Varien_Event_Observer $observer)
     {
-        if (!$this->helper->isConversionsEnabled()) {
+        if (!$this->canSend()) {
             return;
         }
         /** @var Mage_Sales_Model_Quote_Item $item */
@@ -101,10 +117,10 @@ class Hirale_MetaConversions_Model_Observer
      */
     public function addToWishlist(Varien_Event_Observer $observer)
     {
-        $items = $observer->getEvent()->getItems();
-        if (!$this->helper->isConversionsEnabled()) {
+        if (!$this->canSend()) {
             return;
         }
+        $items = $observer->getEvent()->getItems();
         if (count($items) > 0) {
             $contents = [];
             $contentIds = [];
@@ -145,6 +161,9 @@ class Hirale_MetaConversions_Model_Observer
      */
     public function completeRegistration(Varien_Event_Observer $observer)
     {
+        if (!$this->canSend()) {
+            return;
+        }
         $customer = $observer->getEvent()->getCustomer();
         $this->addToQueue([
             'event_time' => time(),
@@ -162,7 +181,7 @@ class Hirale_MetaConversions_Model_Observer
      */
     public function dispatchRouteEvent(Varien_Event_Observer $observer)
     {
-        if (!$this->helper->isConversionsEnabled()) {
+        if (!$this->canSend()) {
             return;
         }
         $currency = Mage::app()->getStore()->getBaseCurrencyCode();

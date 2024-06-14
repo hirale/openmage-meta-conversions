@@ -12,7 +12,8 @@
         "php": "^8.0",
         "magento-hackathon/magento-composer-installer": "*",
         "facebook/php-business-sdk": "*",
-        "hirale/openmage-redis-queue": "*"
+        "hirale/openmage-redis-queue": "*",
+        "jaybizzle/crawler-detect": "^1.2"
     },
     "authors": [
         {
