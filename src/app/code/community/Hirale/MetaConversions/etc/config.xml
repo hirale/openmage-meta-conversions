@@ -5,6 +5,13 @@
             <version>0.1.0</version>
         </Hirale_MetaConversions>
     </modules>
+    <default>
+        <hirale_queue_handlers>
+            <Hirale_MetaConversions_Model_Api>
+                <model>metaconversions/api</model>
+            </Hirale_MetaConversions_Model_Api>
+        </hirale_queue_handlers>
+    </default>
     <global>
         <models>
             <metaconversions>

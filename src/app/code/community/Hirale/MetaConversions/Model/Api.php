@@ -15,7 +15,7 @@ class Hirale_MetaConversions_Model_Api implements Hirale_Queue_Model_TaskHandler
         $this->helper = Mage::helper('metaconversions');
     }
 
-    public function handle($task)
+    public function handle(array $task): void
     {
         $event = $task['data']['event'];
         Api::init(null, null, $this->helper->getAccessToken(), false);
