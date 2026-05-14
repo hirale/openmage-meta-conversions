@@ -1,4 +1,7 @@
 <?php
+
+declare(strict_types=1);
+
 use Jaybizzle\CrawlerDetect\CrawlerDetect;
 
 class Hirale_MetaConversions_Model_Observer
@@ -7,60 +10,22 @@ class Hirale_MetaConversions_Model_Observer
     protected $gaHelper;
     protected $queue;
     protected $CrawlerDetect;
-    public function __construct(
-    ) {
+
+    public function __construct()
+    {
         $this->helper = Mage::helper('metaconversions');
         $this->gaHelper = Mage::helper('googleanalytics');
-        $this->queue = Mage::getModel('hirale_queue/task');
-        $this->CrawlerDetect = new CrawlerDetect();
     }
-
-
-    /**
-     * Add a task to the queue for processing by the Hirale_MetaConversions_Model_Api class.
-     *
-     * @param array $event The name of the event to be processed.
-     * @param array $userData An array containing user data to be associated with the event.
-     * @param array|null $customData An optional array containing custom data to be associated with the event.
-     */
-    protected function addToQueue($event, $userData, $customData = null)
-    {
-        try {
-            $this->queue->addTask(
-                'Hirale_MetaConversions_Model_Api',
-                compact('event', 'userData', 'customData')
-            );
-        } catch (Exception $e) {
-            Mage::logException($e);
-        }
-    }
-
-    protected function isBot()
-    {
-        return $this->CrawlerDetect->isCrawler(Mage::helper('core/http')->getHttpUserAgent());
-    }
-
-    protected function canSend()
-    {
-        if ($this->helper->isConversionsEnabled() && !$this->isBot()) {
-            return true;
-        }
-        return false;
-    }
-    /**
-     * Observe the "sales_quote_item_save_after" event and add the product to the queue for processing.
-     *
-     * @param Varien_Event_Observer $observer The event observer instance.
-     */
 
     public function addToCart(Varien_Event_Observer $observer)
     {
-        if (!$this->canSend()) {
-            return;
-        }
         /** @var Mage_Sales_Model_Quote_Item $item */
         $item = $observer->getEvent()->getItem();
         $quote = Mage::getSingleton('checkout/session')->getQuote();
+        $storeId = $this->resolveStoreId($item->getStoreId() ?: $quote->getStoreId());
+        if (!$this->canSend($storeId)) {
+            return;
+        }
         if ($item->getParentItem()) {
             return;
         }
@@ -96,97 +61,93 @@ class Hirale_MetaConversions_Model_Observer
                         $item->getName(),
                     ]
                 ],
-                'currency' => Mage::app()->getStore()->getBaseCurrencyCode(),
+                'currency' => Mage::app()->getStore($storeId)->getBaseCurrencyCode(),
                 'value' => $this->helper->formatPrice($item->getBaseRowTotal()),
             ];
 
-            $this->addToQueue([
-                'event_time' => time(),
-                'event_source_url' => $this->helper->getCurrentUrl(),
-                'action_source' => $this->helper->getActionSource(),
-                'event_id' => $this->helper->getEventId(),
-                'event_name' => 'AddToCart'
-            ], $this->helper->prepareUserData(), $customData);
+            $this->addToQueue(
+                $this->buildEvent('AddToCart', $storeId),
+                $this->helper->prepareUserData(),
+                $customData,
+                $storeId,
+            );
         }
     }
 
-    /**
-     * Observe the "wishlist_product_add_after" event and add the product to the queue for processing.
-     *
-     * @param Varien_Event_Observer $observer The event observer instance.
-     */
     public function addToWishlist(Varien_Event_Observer $observer)
     {
-        if (!$this->canSend()) {
+        $items = $observer->getEvent()->getItems();
+        if (!$items || count($items) === 0) {
             return;
         }
-        $items = $observer->getEvent()->getItems();
-        if (count($items) > 0) {
-            $contents = [];
-            $contentIds = [];
-            $value = 0;
-            foreach ($items as $item) {
-                $_product = $item->getProduct();
-                $_price = $_product->getFinalPrice();
-                $contents[] = [
-                    $_product->getSku(),
-                    1,
-                    $this->helper->formatPrice($_price),
-                    $_product->getName()
-                ];
-                $contentIds[] = $_product->getSku();
-                $value += $_price;
-            }
-            $customData = [
-                'content_type' => 'product',
-                'content_ids' => $contentIds,
-                'contents' => $contents,
-                'currency' => Mage::app()->getStore()->getBaseCurrencyCode(),
-                'value' => $this->helper->formatPrice($value),
-            ];
-            $this->addToQueue([
-                'event_time' => time(),
-                'event_source_url' => $this->helper->getCurrentUrl(),
-                'action_source' => $this->helper->getActionSource(),
-                'event_id' => $this->helper->getEventId(),
-                'event_name' => 'AddToWishlist'
-            ], $this->helper->prepareUserData(), $customData);
+        $firstItem = is_array($items) ? reset($items) : $items[0];
+        $storeId = $this->resolveStoreId(is_object($firstItem) && method_exists($firstItem, 'getStoreId') ? $firstItem->getStoreId() : null);
+        if (!$this->canSend($storeId)) {
+            return;
         }
+
+        $contents = [];
+        $contentIds = [];
+        $value = 0;
+        foreach ($items as $item) {
+            $_product = $item->getProduct();
+            $_price = $_product->getFinalPrice();
+            $contents[] = [
+                $_product->getSku(),
+                1,
+                $this->helper->formatPrice($_price),
+                $_product->getName()
+            ];
+            $contentIds[] = $_product->getSku();
+            $value += $_price;
+        }
+        $customData = [
+            'content_type' => 'product',
+            'content_ids' => $contentIds,
+            'contents' => $contents,
+            'currency' => Mage::app()->getStore($storeId)->getBaseCurrencyCode(),
+            'value' => $this->helper->formatPrice($value),
+        ];
+        $this->addToQueue(
+            $this->buildEvent('AddToWishlist', $storeId),
+            $this->helper->prepareUserData(),
+            $customData,
+            $storeId,
+        );
     }
 
-    /**
-     * Observe the "customer_register_success" event and add the customer registration to the queue for processing.
-     *
-     * @param Varien_Event_Observer $observer The event observer instance.
-     */
     public function completeRegistration(Varien_Event_Observer $observer)
     {
-        if (!$this->canSend()) {
+        $customer = $observer->getEvent()->getCustomer();
+        $storeId = $this->resolveStoreId($customer ? $customer->getStoreId() : null);
+        if (!$this->canSend($storeId)) {
             return;
         }
-        $customer = $observer->getEvent()->getCustomer();
-        $this->addToQueue([
-            'event_time' => time(),
-            'event_source_url' => $this->helper->getCurrentUrl(),
-            'action_source' => $this->helper->getActionSource(),
-            'event_id' => $this->helper->getEventId(),
-            'event_name' => 'CompleteRegistration'
-        ], $this->helper->prepareUserData($customer));
+        $this->addToQueue(
+            $this->buildEvent('CompleteRegistration', $storeId),
+            $this->helper->prepareUserData($customer),
+            null,
+            $storeId,
+        );
     }
 
-    /**
-     * Observe the "core_app_run_after" event and add various events to the queue for processing based on the current route.
-     *
-     * @param Varien_Event_Observer $observer The event observer instance.
-     */
     public function dispatchRouteEvent(Varien_Event_Observer $observer)
     {
-        if (!$this->canSend()) {
-            return;
-        }
-        $currency = Mage::app()->getStore()->getBaseCurrencyCode();
         $request = $observer->getEvent()->getApp()->getRequest();
         $route = $request->getModuleName() . '_' . $request->getControllerName() . '_' . $request->getActionName();
+
+        if ($route === 'checkout_onepage_success') {
+            $order = Mage::getSingleton('checkout/session')->getLastRealOrder();
+            $storeId = $this->resolveStoreId($order ? $order->getStoreId() : null);
+        } else {
+            $storeId = $this->resolveStoreId();
+        }
+
+        if (!$this->canSend($storeId)) {
+            return;
+        }
+
+        $currency = Mage::app()->getStore($storeId)->getBaseCurrencyCode();
         $eventName = null;
         $customData = null;
 
@@ -218,34 +179,130 @@ class Hirale_MetaConversions_Model_Observer
                 break;
         }
         $userData = $this->helper->prepareUserData();
-        $event = [
-            'event_time' => time(),
-            'event_source_url' => $this->helper->getCurrentUrl(),
-            'action_source' => $this->helper->getActionSource()
-        ];
 
         if ($eventName && $customData) {
-            $event['event_name'] = $eventName;
-            $event['event_id'] = $this->helper->getEventId();
-            $this->addToQueue($event, $userData, $customData);
+            $this->addToQueue(
+                $this->buildEvent($eventName, $storeId),
+                $userData,
+                $customData,
+                $storeId,
+            );
         }
+
         $response = $observer->getEvent()->getApp()->getResponse();
         $body = substr($response->getBody(), 0, 100);
         $statusCode = $response->getHttpResponseCode();
         if (strpos($body, '<!DOCTYPE html') !== false && $statusCode == 200) {
-            $event['event_name'] = 'PageView';
-            $event['event_id'] = $this->helper->getEventId();
-            $this->addToQueue($event, $userData);
+            $this->addToQueue(
+                $this->buildEvent('PageView', $storeId),
+                $userData,
+                null,
+                $storeId,
+            );
         }
     }
 
     /**
-     * Prepare custom data for the "InitiateCheckout" event.
+     * Build the CAPI event envelope.
      *
-     * @param string $currency The base currency code.
-     * @return array The custom data array.
+     * @return array<string, mixed>
      */
-    protected function prepareInitiateCheckoutCustomData($currency)
+    protected function buildEvent(string $eventName, ?int $storeId = null): array
+    {
+        return [
+            'event_time' => time(),
+            'event_source_url' => $this->helper->getCurrentUrl(),
+            'action_source' => $this->helper->getActionSource(),
+            'event_id' => $this->helper->getEventId($eventName),
+            'event_name' => $eventName,
+        ];
+    }
+
+    /**
+     * Resolve the storefront store id, defaulting to the current store when
+     * the candidate is missing or non-positive.
+     */
+    protected function resolveStoreId($candidate = null): int
+    {
+        if ($candidate !== null && $candidate !== '' && (int) $candidate > 0) {
+            return (int) $candidate;
+        }
+        return (int) Mage::app()->getStore()->getId();
+    }
+
+    protected function isBot(): bool
+    {
+        return $this->getCrawlerDetect()->isCrawler(Mage::helper('core/http')->getHttpUserAgent());
+    }
+
+    protected function canSend(?int $storeId = null): bool
+    {
+        return $this->helper->isConversionsEnabled($storeId) && !$this->isBot();
+    }
+
+    /**
+     * Enqueue a single CAPI event onto the Hirale queue. The store id is
+     * carried as `_store_id` in the payload so the worker resolves
+     * access_token / pixel_id against the originating store; both
+     * `_store_id` and `_debug_mode` are stripped before forwarding to
+     * Meta.
+     *
+     * @param array<string, mixed> $event
+     * @param array<string, mixed> $userData
+     * @param array<string, mixed>|null $customData
+     */
+    protected function addToQueue(array $event, array $userData, ?array $customData = null, ?int $storeId = null): void
+    {
+        try {
+            $storeId = $this->resolveStoreId($storeId);
+            $payload = [
+                'event' => $event,
+                'userData' => $userData,
+                'customData' => $customData,
+                Hirale_MetaConversions_Model_Api::META_STORE_ID => $storeId,
+                Hirale_MetaConversions_Model_Api::META_DEBUG_MODE => $this->helper->isDebugMode($storeId),
+            ];
+            $this->getQueue()->enqueue(
+                'Hirale_MetaConversions_Model_Api',
+                $payload,
+                [
+                    'metadata' => [
+                        'source' => 'hirale_metaconversions',
+                        'store_id' => $storeId,
+                        'event_name' => $event['event_name'] ?? '',
+                        'event_id' => $event['event_id'] ?? '',
+                    ],
+                ],
+            );
+        } catch (Exception $e) {
+            Mage::logException($e);
+        }
+    }
+
+    protected function getQueue()
+    {
+        if ($this->queue === null) {
+            $queue = Mage::getModel('hirale_queue/queue');
+            if (!is_object($queue) || !method_exists($queue, 'enqueue')) {
+                throw new RuntimeException('Hirale Queue service is unavailable.');
+            }
+            $this->queue = $queue;
+        }
+        return $this->queue;
+    }
+
+    protected function getCrawlerDetect()
+    {
+        if ($this->CrawlerDetect === null) {
+            $this->CrawlerDetect = new CrawlerDetect();
+        }
+        return $this->CrawlerDetect;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function prepareInitiateCheckoutCustomData($currency): array
     {
         $quote = Mage::getSingleton('checkout/session')->getQuote();
         $contents = [];
@@ -256,15 +313,13 @@ class Hirale_MetaConversions_Model_Observer
             if ($quoteItem->getParentItem()) {
                 continue;
             }
-
             $contentIds[] = $quoteItem->getSku();
-            $contents[] =
-                [
-                    $quoteItem->getSku(),
-                    $quoteItem->getQty(),
-                    $quoteItem->getBasePrice(),
-                    $quoteItem->getName()
-                ];
+            $contents[] = [
+                $quoteItem->getSku(),
+                $quoteItem->getQty(),
+                $quoteItem->getBasePrice(),
+                $quoteItem->getName()
+            ];
             $value += $quoteItem->getBasePrice();
         }
 
@@ -279,12 +334,9 @@ class Hirale_MetaConversions_Model_Observer
     }
 
     /**
-     * Prepare custom data for the "Purchase" event.
-     *
-     * @param string $currency The base currency code.
-     * @return array The custom data array.
+     * @return array<string, mixed>
      */
-    protected function preparePurchaseCustomData($currency)
+    protected function preparePurchaseCustomData($currency): array
     {
         $order = Mage::getSingleton('checkout/session')->getLastRealOrder();
         $contentIds = [];
@@ -294,15 +346,13 @@ class Hirale_MetaConversions_Model_Observer
             if ($orderItem->getParentItem()) {
                 continue;
             }
-
             $contentIds[] = $orderItem->getSku();
-            $contents[] =
-                [
-                    $orderItem->getSku(),
-                    $orderItem->getQtyOrdered(),
-                    $orderItem->getBasePrice(),
-                    $orderItem->getName()
-                ];
+            $contents[] = [
+                $orderItem->getSku(),
+                $orderItem->getQtyOrdered(),
+                $orderItem->getBasePrice(),
+                $orderItem->getName()
+            ];
         }
 
         return [
@@ -317,12 +367,9 @@ class Hirale_MetaConversions_Model_Observer
     }
 
     /**
-     * Prepare custom data for the "ViewContent" event.
-     *
-     * @param string $currency The base currency code.
-     * @return array The custom data array.
+     * @return array<string, mixed>
      */
-    protected function prepareViewContentCustomData($currency)
+    protected function prepareViewContentCustomData($currency): array
     {
         $product = Mage::registry('current_product');
 
@@ -343,13 +390,9 @@ class Hirale_MetaConversions_Model_Observer
     }
 
     /**
-     * Prepare custom data for the "Search" event.
-     *
-     * @param string $currency The base currency code.
-     * @param string $q The search query string.
-     * @return array The custom data array.
+     * @return array<string, mixed>
      */
-    protected function prepareSearchCustomData($currency, $q)
+    protected function prepareSearchCustomData($currency, $q): array
     {
         $toolbarBlock = Mage::app()->getLayout()->getBlock('product_list_toolbar');
         $listBlock = Mage::app()->getLayout()->getBlock('search_result_list');
@@ -382,5 +425,4 @@ class Hirale_MetaConversions_Model_Observer
             'search_string' => $q
         ];
     }
-
 }
