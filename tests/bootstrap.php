@@ -137,6 +137,36 @@ if (!class_exists('Mage')) {
     }
 }
 
+if (!class_exists('Varien_Event')) {
+    class Varien_Event
+    {
+        /** @param array<string, mixed> $data */
+        public function __construct(private array $data = []) {}
+
+        public function __call(string $name, array $args): mixed
+        {
+            if (str_starts_with($name, 'get')) {
+                // Mirror Varien_Object magic getters: getActionName -> action_name.
+                $key = strtolower((string) preg_replace('/(.)([A-Z])/', '$1_$2', substr($name, 3)));
+                return $this->data[$key] ?? null;
+            }
+            return null;
+        }
+    }
+}
+
+if (!class_exists('Varien_Event_Observer')) {
+    class Varien_Event_Observer
+    {
+        public function __construct(private ?Varien_Event $event = null) {}
+
+        public function getEvent(): ?Varien_Event
+        {
+            return $this->event;
+        }
+    }
+}
+
 if (!interface_exists('Hirale_Queue_Model_TaskHandlerInterface')) {
     interface Hirale_Queue_Model_TaskHandlerInterface
     {

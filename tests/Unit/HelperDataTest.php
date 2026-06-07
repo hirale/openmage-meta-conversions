@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace HiraleMetaConversions\Tests\Unit;
 
+use FacebookAds\Object\ServerSide\Gender;
 use HiraleMetaConversions\Tests\Support\CookieStub;
+use HiraleMetaConversions\Tests\Support\CustomerStub;
 use HiraleMetaConversions\Tests\Support\HttpHelperStub;
 use HiraleMetaConversions\Tests\Support\UrlHelperStub;
 use PHPUnit\Framework\TestCase;
@@ -117,5 +119,97 @@ class HelperDataTest extends TestCase
 
         self::assertSame(1.23, $helper->formatPrice(1.234));
         self::assertSame(1.24, $helper->formatPrice(1.236));
+    }
+
+    public function testPrepareUserDataMapsMaleGender(): void
+    {
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+        $data = $helper->prepareUserData(new CustomerStub(gender: 1));
+
+        self::assertSame(Gender::MALE, $data['gender']);
+    }
+
+    public function testPrepareUserDataMapsFemaleGender(): void
+    {
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+        // Magento gender 2 is female; the old truthy check wrongly reported male.
+        $data = $helper->prepareUserData(new CustomerStub(gender: 2));
+
+        self::assertSame(Gender::FEMALE, $data['gender']);
+    }
+
+    public function testPrepareUserDataOmitsGenderWhenUnspecified(): void
+    {
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+        $data = $helper->prepareUserData(new CustomerStub(gender: 0));
+
+        self::assertArrayNotHasKey('gender', $data);
+    }
+
+    public function testPrepareUserDataNormalizesDateOfBirthToYyyymmdd(): void
+    {
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+        $data = $helper->prepareUserData(new CustomerStub(dateOfBirth: '1990-05-15'));
+
+        self::assertSame('19900515', $data['date_of_birth']);
+    }
+
+    public function testPrepareUserDataOmitsDateOfBirthWhenEmpty(): void
+    {
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+        $data = $helper->prepareUserData(new CustomerStub(dateOfBirth: ''));
+
+        self::assertArrayNotHasKey('date_of_birth', $data);
+    }
+
+    public function testPrepareUserDataOmitsMysqlZeroDateOfBirth(): void
+    {
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+        // strtotime('0000-00-00') used to yield the bogus '-00011130'; the
+        // strict parser must reject the MySQL zero date instead.
+        $data = $helper->prepareUserData(new CustomerStub(dateOfBirth: '0000-00-00'));
+
+        self::assertArrayNotHasKey('date_of_birth', $data);
+    }
+
+    public function testPrepareUserDataRejectsAmbiguousNonIsoDateOfBirth(): void
+    {
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+        // '06/05/1990' is ambiguous; strtotime would silently misread it.
+        $data = $helper->prepareUserData(new CustomerStub(dateOfBirth: '06/05/1990'));
+
+        self::assertArrayNotHasKey('date_of_birth', $data);
+    }
+
+    public function testPrepareUserDataNormalizesDateOfBirthWithTimeComponent(): void
+    {
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+        $data = $helper->prepareUserData(new CustomerStub(dateOfBirth: '1990-05-15 00:00:00'));
+
+        self::assertSame('19900515', $data['date_of_birth']);
+    }
+
+    public function testPrepareUserDataRejectsImplausibleFutureDateOfBirth(): void
+    {
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+        $data = $helper->prepareUserData(new CustomerStub(dateOfBirth: '2099-01-01'));
+
+        self::assertArrayNotHasKey('date_of_birth', $data);
+    }
+
+    public function testPrepareUserDataIncludesExternalIdForKnownCustomer(): void
+    {
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+        $data = $helper->prepareUserData(new CustomerStub(id: 42));
+
+        self::assertSame('42', $data['external_id']);
+    }
+
+    public function testPrepareUserDataOmitsExternalIdWhenCustomerHasNoId(): void
+    {
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+        $data = $helper->prepareUserData(new CustomerStub());
+
+        self::assertArrayNotHasKey('external_id', $data);
     }
 }

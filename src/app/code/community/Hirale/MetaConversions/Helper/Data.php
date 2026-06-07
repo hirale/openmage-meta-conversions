@@ -120,8 +120,20 @@ class Hirale_MetaConversions_Helper_Data extends Mage_Core_Helper_Abstract
             $userData['email'] = (string) $customer->getEmail();
             $userData['first_name'] = (string) $customer->getFirstname();
             $userData['last_name'] = (string) $customer->getLastname();
-            $userData['gender'] = $customer->getGender() ? Gender::MALE : Gender::FEMALE;
-            $userData['date_of_birth'] = (string) $customer->getDateOfBirth();
+
+            if ($customer->getId()) {
+                $userData['external_id'] = (string) $customer->getId();
+            }
+
+            $gender = $this->_mapGender($customer->getGender());
+            if ($gender !== null) {
+                $userData['gender'] = $gender;
+            }
+
+            $dateOfBirth = $this->_formatDateOfBirth($customer->getDateOfBirth());
+            if ($dateOfBirth !== null) {
+                $userData['date_of_birth'] = $dateOfBirth;
+            }
 
             if ($address) {
                 $userData['phone'] = (string) $address->getTelephone();
@@ -133,6 +145,55 @@ class Hirale_MetaConversions_Helper_Data extends Mage_Core_Helper_Abstract
         }
 
         return $userData;
+    }
+
+    /**
+     * Map Magento's numeric gender (1 = male, 2 = female) to Meta's gender
+     * code. Returns null for "not specified" so the key is omitted rather
+     * than guessed — a wrong value hurts match quality.
+     *
+     * @param int|string|null $gender
+     */
+    private function _mapGender($gender): ?string
+    {
+        return match ((int) $gender) {
+            1 => Gender::MALE,
+            2 => Gender::FEMALE,
+            default => null,
+        };
+    }
+
+    /**
+     * Normalize a stored date of birth to Meta's expected YYYYMMDD form.
+     * Returns null when the value is empty, malformed, or implausible.
+     *
+     * Magento stores the DOB as `Y-m-d` (optionally with a time component), so
+     * the date part is parsed strictly. strtotime() is deliberately avoided:
+     * it coerces the MySQL zero date '0000-00-00' into a far-past timestamp
+     * (yielding a bogus '-00011130') and silently misreads ambiguous formats
+     * like '06/05/1990' instead of rejecting them.
+     *
+     * @param string|null $dateOfBirth
+     */
+    private function _formatDateOfBirth($dateOfBirth): ?string
+    {
+        $dateOfBirth = trim((string) $dateOfBirth);
+        if ($dateOfBirth === '') {
+            return null;
+        }
+
+        $date = DateTime::createFromFormat('!Y-m-d', substr($dateOfBirth, 0, 10));
+        $errors = DateTime::getLastErrors();
+        if ($date === false || ($errors && ($errors['warning_count'] > 0 || $errors['error_count'] > 0))) {
+            return null;
+        }
+
+        $year = (int) $date->format('Y');
+        if ($year < 1900 || $year > (int) date('Y')) {
+            return null;
+        }
+
+        return $date->format('Ymd');
     }
 
     /**

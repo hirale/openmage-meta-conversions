@@ -53,7 +53,7 @@ class Hirale_MetaConversions_Model_Api implements Hirale_Queue_Model_TaskHandler
             $event->setCustomData(new CustomData($customData));
         }
 
-        $response = $this->_sendEvent($accessToken, $pixelId, $event);
+        $response = $this->_sendEvent($accessToken, $pixelId, $event, $debugMode);
 
         if ($debugMode) {
             Mage::log($event);
@@ -63,13 +63,17 @@ class Hirale_MetaConversions_Model_Api implements Hirale_Queue_Model_TaskHandler
 
     /**
      * Build the CAPI request and execute it. Factored out so unit tests can
-     * intercept without hitting graph.facebook.com.
+     * intercept without hitting graph.facebook.com. The curl logger is only
+     * attached in debug mode to keep the queue worker output clean on the
+     * happy path.
      */
-    protected function _sendEvent(string $accessToken, string $pixelId, Event $event): mixed
+    protected function _sendEvent(string $accessToken, string $pixelId, Event $event, bool $debugMode = false): mixed
     {
         Api::init(null, null, $accessToken, false);
         $api = Api::instance();
-        $api->setLogger(new CurlLogger());
+        if ($debugMode) {
+            $api->setLogger(new CurlLogger());
+        }
 
         $request = new EventRequest($pixelId);
         $request->setEvents([$event]);

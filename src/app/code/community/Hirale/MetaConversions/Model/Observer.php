@@ -6,15 +6,17 @@ use Jaybizzle\CrawlerDetect\CrawlerDetect;
 
 class Hirale_MetaConversions_Model_Observer
 {
-    protected $helper;
-    protected $gaHelper;
-    protected $queue;
-    protected $CrawlerDetect;
+    protected ?Hirale_MetaConversions_Helper_Data $helper = null;
+    protected ?object $queue = null;
+    protected ?CrawlerDetect $CrawlerDetect = null;
 
     public function __construct()
     {
-        $this->helper = Mage::helper('metaconversions');
-        $this->gaHelper = Mage::helper('googleanalytics');
+        $helper = Mage::helper('metaconversions');
+        if (!$helper instanceof Hirale_MetaConversions_Helper_Data) {
+            throw new RuntimeException('Hirale MetaConversions helper is unavailable.');
+        }
+        $this->helper = $helper;
     }
 
     public function addToCart(Varien_Event_Observer $observer)
@@ -54,19 +56,17 @@ class Hirale_MetaConversions_Model_Observer
                 'content_type' => 'product',
                 'content_ids' => [$item->getSku()],
                 'contents' => [
-                    [
-                        $item->getSku(),
-                        $addedQty,
-                        $item->getBasePrice(),
-                        $item->getName(),
-                    ]
+                    $this->buildContentRow($item->getSku(), $addedQty, $item->getBasePrice(), $item->getName()),
                 ],
                 'currency' => Mage::app()->getStore($storeId)->getBaseCurrencyCode(),
-                'value' => $this->helper->formatPrice($item->getBaseRowTotal()),
+                // Value must reconcile with the contents above: only the units
+                // just added, not the whole line (getBaseRowTotal would triple
+                // the reported value when an existing line's qty is increased).
+                'value' => $this->helper->formatPrice($addedQty * $item->getBasePrice()),
             ];
 
             $this->addToQueue(
-                $this->buildEvent('AddToCart', $storeId),
+                $this->buildEvent('AddToCart'),
                 $this->helper->prepareUserData(),
                 $customData,
                 $storeId,
@@ -81,7 +81,10 @@ class Hirale_MetaConversions_Model_Observer
             return;
         }
         $firstItem = is_array($items) ? reset($items) : $items[0];
-        $storeId = $this->resolveStoreId(is_object($firstItem) && method_exists($firstItem, 'getStoreId') ? $firstItem->getStoreId() : null);
+        // getStoreId() is a Varien magic getter on Mage_Wishlist_Model_Item, so
+        // method_exists() returns false for it — call it directly (it yields
+        // null on a non-Varien item, which resolveStoreId folds to current store).
+        $storeId = $this->resolveStoreId(is_object($firstItem) ? $firstItem->getStoreId() : null);
         if (!$this->canSend($storeId)) {
             return;
         }
@@ -92,14 +95,12 @@ class Hirale_MetaConversions_Model_Observer
         foreach ($items as $item) {
             $_product = $item->getProduct();
             $_price = $_product->getFinalPrice();
-            $contents[] = [
-                $_product->getSku(),
-                1,
-                $this->helper->formatPrice($_price),
-                $_product->getName()
-            ];
+            // getQty() is a Varien magic getter (method_exists() is false for it);
+            // call it directly and default a missing/zero qty to 1.
+            $_qty = $item->getQty() ?: 1;
+            $contents[] = $this->buildContentRow($_product->getSku(), $_qty, $_price, $_product->getName());
             $contentIds[] = $_product->getSku();
-            $value += $_price;
+            $value += $_price * $_qty;
         }
         $customData = [
             'content_type' => 'product',
@@ -109,7 +110,7 @@ class Hirale_MetaConversions_Model_Observer
             'value' => $this->helper->formatPrice($value),
         ];
         $this->addToQueue(
-            $this->buildEvent('AddToWishlist', $storeId),
+            $this->buildEvent('AddToWishlist'),
             $this->helper->prepareUserData(),
             $customData,
             $storeId,
@@ -124,7 +125,7 @@ class Hirale_MetaConversions_Model_Observer
             return;
         }
         $this->addToQueue(
-            $this->buildEvent('CompleteRegistration', $storeId),
+            $this->buildEvent('CompleteRegistration'),
             $this->helper->prepareUserData($customer),
             null,
             $storeId,
@@ -182,7 +183,7 @@ class Hirale_MetaConversions_Model_Observer
 
         if ($eventName && $customData) {
             $this->addToQueue(
-                $this->buildEvent($eventName, $storeId),
+                $this->buildEvent($eventName),
                 $userData,
                 $customData,
                 $storeId,
@@ -194,7 +195,7 @@ class Hirale_MetaConversions_Model_Observer
         $statusCode = $response->getHttpResponseCode();
         if (strpos($body, '<!DOCTYPE html') !== false && $statusCode == 200) {
             $this->addToQueue(
-                $this->buildEvent('PageView', $storeId),
+                $this->buildEvent('PageView'),
                 $userData,
                 null,
                 $storeId,
@@ -207,7 +208,7 @@ class Hirale_MetaConversions_Model_Observer
      *
      * @return array<string, mixed>
      */
-    protected function buildEvent(string $eventName, ?int $storeId = null): array
+    protected function buildEvent(string $eventName): array
     {
         return [
             'event_time' => time(),
@@ -314,13 +315,8 @@ class Hirale_MetaConversions_Model_Observer
                 continue;
             }
             $contentIds[] = $quoteItem->getSku();
-            $contents[] = [
-                $quoteItem->getSku(),
-                $quoteItem->getQty(),
-                $quoteItem->getBasePrice(),
-                $quoteItem->getName()
-            ];
-            $value += $quoteItem->getBasePrice();
+            $contents[] = $this->buildContentRow($quoteItem->getSku(), $quoteItem->getQty(), $quoteItem->getBasePrice(), $quoteItem->getName());
+            $value += $quoteItem->getBasePrice() * $quoteItem->getQty();
         }
 
         return [
@@ -347,12 +343,7 @@ class Hirale_MetaConversions_Model_Observer
                 continue;
             }
             $contentIds[] = $orderItem->getSku();
-            $contents[] = [
-                $orderItem->getSku(),
-                $orderItem->getQtyOrdered(),
-                $orderItem->getBasePrice(),
-                $orderItem->getName()
-            ];
+            $contents[] = $this->buildContentRow($orderItem->getSku(), $orderItem->getQtyOrdered(), $orderItem->getBasePrice(), $orderItem->getName());
         }
 
         return [
@@ -377,16 +368,50 @@ class Hirale_MetaConversions_Model_Observer
             'currency' => $currency,
             'content_type' => 'product',
             'content_ids' => [$product->getSku()],
-            'content_category' => $this->gaHelper->getLastCategoryName($product) ?? '',
+            'content_category' => $this->resolveCategoryName(),
             'contents' => [
-                [
-                    $product->getSku(),
-                    1,
-                    $this->helper->formatPrice($product->getFinalPrice()),
-                    $product->getName()
-                ]
+                $this->buildContentRow($product->getSku(), 1, $product->getFinalPrice(), $product->getName()),
             ],
         ];
+    }
+
+    /**
+     * Resolve the category name for ViewContent's content_category from the
+     * category the product is currently being viewed under. Returns an empty
+     * string when the product is viewed outside any category context. This
+     * intentionally reads only the `current_category` registry so the module
+     * carries no dependency on Mage_GoogleAnalytics and adds no extra query.
+     */
+    protected function resolveCategoryName(): string
+    {
+        $category = Mage::registry('current_category');
+        if (is_object($category) && method_exists($category, 'getName')) {
+            return (string) $category->getName();
+        }
+
+        return '';
+    }
+
+    /**
+     * Build a single Meta `contents` tuple [product_id, quantity, item_price,
+     * title]. Centralised so every event produces the same shape with a
+     * consistent 2-decimal item price (the worker maps it via
+     * Hirale_MetaConversions_Helper_Data::prepareContent).
+     *
+     * sku/name are cast rather than type-hinted: Magento item getters can
+     * return null for edge entities (deleted-product references, custom quote
+     * items), and a TypeError here would escape the observer's safety net
+     * (addToQueue catches Exception, not Error) and break the storefront page.
+     *
+     * @param string|null $sku
+     * @param int|float|string $qty
+     * @param int|float|string $price
+     * @param string|null $name
+     * @return array{0:string,1:int|float|string,2:float,3:string}
+     */
+    protected function buildContentRow($sku, $qty, $price, $name): array
+    {
+        return [(string) $sku, $qty, $this->helper->formatPrice($price), (string) $name];
     }
 
     /**
@@ -394,29 +419,21 @@ class Hirale_MetaConversions_Model_Observer
      */
     protected function prepareSearchCustomData($currency, $q): array
     {
-        $toolbarBlock = Mage::app()->getLayout()->getBlock('product_list_toolbar');
-        $listBlock = Mage::app()->getLayout()->getBlock('search_result_list');
-        $productCollection = $listBlock->getLoadedProductCollection();
-        $pageSize = $toolbarBlock->getLimit();
-        $currentPage = $toolbarBlock->getCurrentPage();
-
-        if ($pageSize !== 'all') {
-            $productCollection->setPageSize($pageSize)->setCurPage($currentPage);
-        }
-
         $contents = [];
         $contentIds = [];
-        $value = 0;
-        foreach ($productCollection as $product) {
-            $contents[] = [
-                $product->getSku(),
-                1,
-                $this->helper->formatPrice($product->getFinalPrice()),
-                $product->getName()
-            ];
-            $contentIds[] = $product->getSku();
-            $value += $product->getFinalPrice();
+
+        // The search result list block has already loaded and paginated its
+        // collection during page render, so iterate it directly rather than
+        // re-applying the toolbar page size (which would be a no-op or a
+        // redundant reload).
+        $listBlock = Mage::app()->getLayout()->getBlock('search_result_list');
+        if ($listBlock) {
+            foreach ($listBlock->getLoadedProductCollection() as $product) {
+                $contents[] = $this->buildContentRow($product->getSku(), 1, $product->getFinalPrice(), $product->getName());
+                $contentIds[] = $product->getSku();
+            }
         }
+
         return [
             'currency' => $currency,
             'content_type' => 'product',

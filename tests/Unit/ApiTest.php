@@ -101,6 +101,41 @@ class ApiTest extends TestCase
         self::assertCount(2, \Mage::$logs);
     }
 
+    public function testHandlePassesDebugFlagToSendForLoggerGating(): void
+    {
+        \Mage::$config['1']['meta/conversions/access_token'] = 'token-1';
+        \Mage::$config['1']['meta/conversions/pixel_id'] = '111';
+
+        $api = new RecordingApi();
+        $api->handle([
+            'data' => [
+                'event' => ['event_name' => 'AddToCart', 'event_id' => 'evt-1'],
+                'userData' => [],
+                '_store_id' => 1,
+                '_debug_mode' => true,
+            ],
+        ]);
+
+        self::assertTrue($api->sends[0]['debug_mode']);
+    }
+
+    public function testHandleDefaultsDebugFlagOff(): void
+    {
+        \Mage::$config['1']['meta/conversions/access_token'] = 'token-1';
+        \Mage::$config['1']['meta/conversions/pixel_id'] = '111';
+
+        $api = new RecordingApi();
+        $api->handle([
+            'data' => [
+                'event' => ['event_name' => 'AddToCart', 'event_id' => 'evt-1'],
+                'userData' => [],
+                '_store_id' => 1,
+            ],
+        ]);
+
+        self::assertFalse($api->sends[0]['debug_mode']);
+    }
+
     public function testHandleProcessesCustomDataContentsThroughHelper(): void
     {
         \Mage::$config['1']['meta/conversions/access_token'] = 'token-1';
@@ -114,12 +149,22 @@ class ApiTest extends TestCase
                 'customData' => [
                     'currency' => 'USD',
                     'value' => 9.99,
-                    'contents' => [['SKU-1', 1, 9.99, 'Test Item']],
+                    'contents' => [['SKU-1', 2, 9.99, 'Test Item']],
                 ],
                 '_store_id' => 1,
             ],
         ]);
 
         self::assertCount(1, $api->sends);
+
+        // Assert the raw tuple was actually mapped into a Content object via the
+        // helper, not silently dropped (assertCount alone would not catch that).
+        $customData = $api->sends[0]['event']->getCustomData();
+        self::assertNotNull($customData);
+        $contents = $customData->getContents();
+        self::assertCount(1, $contents);
+        self::assertSame('SKU-1', $contents[0]->getProductId());
+        self::assertSame('Test Item', $contents[0]->getTitle());
+        self::assertEquals(2, $contents[0]->getQuantity());
     }
 }
