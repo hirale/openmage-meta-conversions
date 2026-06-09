@@ -1,26 +1,29 @@
 {
     "name": "hirale/openmage-meta-conversions",
-    "description": "A module for integrating Meta Conversion API",
-    "type": "magento-module",
+    "type": "maho-module",
     "license": "OSL-3.0",
+    "description": "Meta Conversions API integration for Maho, built on hirale/queue.",
     "keywords": [
-        "magento",
+        "maho",
+        "mahoecommerce",
         "magento1",
-        "openmage"
+        "meta",
+        "facebook",
+        "capi"
     ],
     "require": {
-        "php": "^8.0",
-        "magento-hackathon/magento-composer-installer": "*",
+        "php": ">=8.3",
+        "mahocommerce/maho": "^26.5",
+        "hirale/queue": "^3.0 || dev-master",
         "facebook/php-business-sdk": "*",
-        "hirale/openmage-redis-queue": "*",
         "jaybizzle/crawler-detect": "^1.2"
     },
     "require-dev": {
-        "phpunit/phpunit": "^10.5 || ^12.5"
+        "phpunit/phpunit": "^10.5"
     },
     "config": {
         "allow-plugins": {
-            "magento-hackathon/magento-composer-installer": false
+            "mahocommerce/maho-composer-plugin": true
         }
     },
     "autoload-dev": {
@@ -28,24 +31,13 @@
             "HiraleMetaConversions\\Tests\\": "tests/"
         }
     },
+    "extra": {
+        "maho-module-dir": "app/code/community/Hirale/MetaConversions"
+    },
     "scripts": {
         "test": "phpunit"
     },
     "authors": [
-        {
-            "name": "Hirale"
-        }
-    ],
-    "extra": {
-        "map": [
-            [
-                "src/app/etc/modules/Hirale_MetaConversions.xml",
-                "app/etc/modules/Hirale_MetaConversions.xml"
-            ],
-            [
-                "src/app/code/community/Hirale/MetaConversions",
-                "app/code/community/Hirale/MetaConversions"
-            ]
-        ]
-    }
+        { "name": "Hirale" }
+    ]
 }

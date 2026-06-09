@@ -9,25 +9,17 @@ use FacebookAds\Object\ServerSide\Event;
 use FacebookAds\Object\ServerSide\EventRequest;
 use FacebookAds\Object\ServerSide\UserData;
 
-class Hirale_MetaConversions_Model_Api implements Hirale_Queue_Model_TaskHandlerInterface
+class Hirale_MetaConversions_Model_Api
 {
-    public const META_STORE_ID = '_store_id';
-    public const META_DEBUG_MODE = '_debug_mode';
-
     private ?Hirale_MetaConversions_Helper_Data $_helper = null;
 
-    /**
-     * @param array<string, mixed> $task
-     */
-    public function handle(array $task): void
+    public function __invoke(Hirale_MetaConversions_Message_CapiEventMessage $message): void
     {
-        $payload = is_array($task['data'] ?? null) ? $task['data'] : [];
-        $storeId = isset($payload[self::META_STORE_ID]) ? (int) $payload[self::META_STORE_ID] : null;
-        $debugMode = !empty($payload[self::META_DEBUG_MODE]);
-
-        $eventData = is_array($payload['event'] ?? null) ? $payload['event'] : [];
-        $userData = is_array($payload['userData'] ?? null) ? $payload['userData'] : [];
-        $customData = isset($payload['customData']) && is_array($payload['customData']) ? $payload['customData'] : null;
+        $storeId    = $message->storeId;
+        $debugMode  = $message->debugMode;
+        $eventData  = $message->event;
+        $userData   = $message->userData;
+        $customData = $message->customData;
 
         $helper = $this->_getHelper();
         $accessToken = $helper->getAccessToken($storeId);

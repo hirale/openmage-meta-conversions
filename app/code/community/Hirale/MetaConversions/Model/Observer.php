@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Hirale\Queue\Bus;
 use Jaybizzle\CrawlerDetect\CrawlerDetect;
 
 class Hirale_MetaConversions_Model_Observer
@@ -256,25 +257,13 @@ class Hirale_MetaConversions_Model_Observer
     {
         try {
             $storeId = $this->resolveStoreId($storeId);
-            $payload = [
-                'event' => $event,
-                'userData' => $userData,
-                'customData' => $customData,
-                Hirale_MetaConversions_Model_Api::META_STORE_ID => $storeId,
-                Hirale_MetaConversions_Model_Api::META_DEBUG_MODE => $this->helper->isDebugMode($storeId),
-            ];
-            $this->getQueue()->enqueue(
-                'Hirale_MetaConversions_Model_Api',
-                $payload,
-                [
-                    'metadata' => [
-                        'source' => 'hirale_metaconversions',
-                        'store_id' => $storeId,
-                        'event_name' => $event['event_name'] ?? '',
-                        'event_id' => $event['event_id'] ?? '',
-                    ],
-                ],
-            );
+            Bus::dispatch(new Hirale_MetaConversions_Message_CapiEventMessage(
+                event: $event,
+                userData: $userData,
+                customData: $customData,
+                storeId: (int) $storeId,
+                debugMode: $this->helper->isDebugMode($storeId),
+            ));
         } catch (Exception $e) {
             Mage::logException($e);
         }
