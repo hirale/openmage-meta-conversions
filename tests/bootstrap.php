@@ -167,17 +167,9 @@ if (!class_exists('Varien_Event_Observer')) {
     }
 }
 
-if (!interface_exists('Hirale_Queue_Model_TaskHandlerInterface')) {
-    interface Hirale_Queue_Model_TaskHandlerInterface
-    {
-        /**
-         * @param array<string, mixed> $task
-         */
-        public function handle(array $task): void;
-    }
-}
-
-require_once __DIR__ . '/../src/app/code/community/Hirale/MetaConversions/Helper/Data.php';
-require_once __DIR__ . '/../src/app/code/community/Hirale/MetaConversions/Model/Api.php';
+require_once __DIR__ . '/Support/QueueBusStub.php';
+require_once __DIR__ . '/../app/code/community/Hirale/MetaConversions/Helper/Data.php';
+require_once __DIR__ . '/../app/code/community/Hirale/MetaConversions/Message/CapiEventMessage.php';
+require_once __DIR__ . '/../app/code/community/Hirale/MetaConversions/Model/Api.php';
 require_once __DIR__ . '/Support/Stubs.php';
-require_once __DIR__ . '/../src/app/code/community/Hirale/MetaConversions/Model/Observer.php';
+require_once __DIR__ . '/../app/code/community/Hirale/MetaConversions/Model/Observer.php';

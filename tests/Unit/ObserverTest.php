@@ -12,7 +12,6 @@ use HiraleMetaConversions\Tests\Support\CookieStub;
 use HiraleMetaConversions\Tests\Support\HttpHelperStub;
 use HiraleMetaConversions\Tests\Support\LayoutStub;
 use HiraleMetaConversions\Tests\Support\ProductStub;
-use HiraleMetaConversions\Tests\Support\QueueStub;
 use HiraleMetaConversions\Tests\Support\QuoteItemStub;
 use HiraleMetaConversions\Tests\Support\QuoteStub;
 use HiraleMetaConversions\Tests\Support\SearchListBlockStub;
@@ -22,16 +21,13 @@ use PHPUnit\Framework\TestCase;
 
 class ObserverTest extends TestCase
 {
-    private QueueStub $queue;
-
     protected function setUp(): void
     {
         \Mage::reset();
-        $this->queue = new QueueStub();
+        \Hirale\Queue\Bus::reset();
         \Mage::$helpers['metaconversions'] = new \Hirale_MetaConversions_Helper_Data();
         \Mage::$helpers['core/http'] = new HttpHelperStub();
         \Mage::$helpers['core/url'] = new UrlHelperStub();
-        \Mage::$models['hirale_queue/queue'] = $this->queue;
         \Mage::$singletons['core/cookie'] = new CookieStub();
         \Mage::$singletons['customer/session'] = new \Mage_Customer_Model_Session();
         \Mage::$app = new AppStub(1);
@@ -47,9 +43,10 @@ class ObserverTest extends TestCase
     protected function tearDown(): void
     {
         \Mage::reset();
+        \Hirale\Queue\Bus::reset();
     }
 
-    public function testAddToQueueIncludesStoreIdAndDebugFlagAndMetadata(): void
+    public function testAddToQueueDispatchesCapiMessageWithStoreContext(): void
     {
         $observer = new ObserverAccessor();
         $observer->callAddToQueue(
@@ -65,17 +62,14 @@ class ObserverTest extends TestCase
             7,
         );
 
-        self::assertCount(1, $this->queue->calls);
-        $call = $this->queue->calls[0];
-        self::assertSame('Hirale_MetaConversions_Model_Api', $call['handler']);
-        self::assertSame(7, $call['payload']['_store_id']);
-        self::assertFalse($call['payload']['_debug_mode']);
-        self::assertSame('AddToCart', $call['payload']['event']['event_name']);
-        self::assertSame('evt-123', $call['payload']['event']['event_id']);
-        self::assertSame('hirale_metaconversions', $call['options']['metadata']['source']);
-        self::assertSame(7, $call['options']['metadata']['store_id']);
-        self::assertSame('AddToCart', $call['options']['metadata']['event_name']);
-        self::assertSame('evt-123', $call['options']['metadata']['event_id']);
+        self::assertCount(1, \Hirale\Queue\Bus::$dispatches);
+        $message = \Hirale\Queue\Bus::$dispatches[0]['message'];
+        self::assertInstanceOf(\Hirale_MetaConversions_Message_CapiEventMessage::class, $message);
+        self::assertSame(7, $message->storeId);
+        self::assertFalse($message->debugMode);
+        self::assertSame('AddToCart', $message->event['event_name']);
+        self::assertSame('evt-123', $message->event['event_id']);
+        self::assertSame(['currency' => 'USD', 'value' => 9.99], $message->customData);
     }
 
     public function testAddToQueueFallsBackToCurrentStoreWhenStoreIdMissing(): void
@@ -91,12 +85,12 @@ class ObserverTest extends TestCase
             null,
         );
 
-        self::assertSame(42, $this->queue->calls[0]['payload']['_store_id']);
+        self::assertSame(42, \Hirale\Queue\Bus::$dispatches[0]['message']->storeId);
     }
 
-    public function testAddToQueueSwallowsQueueExceptions(): void
+    public function testAddToQueueSwallowsDispatchExceptions(): void
     {
-        $this->queue->nextException = new \RuntimeException('redis down');
+        \Hirale\Queue\Bus::$nextException = new \RuntimeException('redis down');
 
         $observer = new ObserverAccessor();
         $observer->callAddToQueue(
@@ -181,8 +175,8 @@ class ObserverTest extends TestCase
         $observer = new \Hirale_MetaConversions_Model_Observer();
         $observer->addToCart(new \Varien_Event_Observer(new \Varien_Event(['item' => $item])));
 
-        self::assertCount(1, $this->queue->calls);
-        $customData = $this->queue->calls[0]['payload']['customData'];
+        self::assertCount(1, \Hirale\Queue\Bus::$dispatches);
+        $customData = \Hirale\Queue\Bus::$dispatches[0]['message']->customData;
         // 1 added unit * 10.00 = 10.00, NOT the full base row total (30.00).
         self::assertSame(10.0, $customData['value']);
         self::assertSame(1.0, $customData['contents'][0][1]);
@@ -205,14 +199,14 @@ class ObserverTest extends TestCase
         $observer = new \Hirale_MetaConversions_Model_Observer();
         $observer->addToWishlist(new \Varien_Event_Observer(new \Varien_Event(['items' => [$item]])));
 
-        self::assertCount(1, $this->queue->calls);
-        $call = $this->queue->calls[0];
-        $customData = $call['payload']['customData'];
+        self::assertCount(1, \Hirale\Queue\Bus::$dispatches);
+        $message = \Hirale\Queue\Bus::$dispatches[0]['message'];
+        $customData = $message->customData;
         // 10.00 * 2 = 20.00 — the item quantity is no longer hardcoded to 1.
         self::assertSame(20.0, $customData['value']);
         self::assertSame(2.0, $customData['contents'][0][1]);
         // Per-item store id is resolved (was dead code under method_exists).
-        self::assertSame(7, $call['payload']['_store_id']);
+        self::assertSame(7, $message->storeId);
     }
 
     public function testBuildContentRowCastsNullSkuAndNameToString(): void

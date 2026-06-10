@@ -8,7 +8,6 @@ use Jaybizzle\CrawlerDetect\CrawlerDetect;
 class Hirale_MetaConversions_Model_Observer
 {
     protected ?Hirale_MetaConversions_Helper_Data $helper = null;
-    protected ?object $queue = null;
     protected ?CrawlerDetect $CrawlerDetect = null;
 
     public function __construct()
@@ -269,17 +268,6 @@ class Hirale_MetaConversions_Model_Observer
         }
     }
 
-    protected function getQueue()
-    {
-        if ($this->queue === null) {
-            $queue = Mage::getModel('hirale_queue/queue');
-            if (!is_object($queue) || !method_exists($queue, 'enqueue')) {
-                throw new RuntimeException('Hirale Queue service is unavailable.');
-            }
-            $this->queue = $queue;
-        }
-        return $this->queue;
-    }
 
     protected function getCrawlerDetect()
     {

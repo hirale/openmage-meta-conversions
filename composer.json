@@ -1,11 +1,12 @@
 {
     "name": "hirale/openmage-meta-conversions",
-    "type": "maho-module",
+    "type": "magento-module",
     "license": "OSL-3.0",
-    "description": "Meta Conversions API integration for Maho, built on hirale/queue.",
+    "description": "Meta Conversions API integration for OpenMage and Maho, built on hirale/queue.",
     "keywords": [
         "maho",
         "mahoecommerce",
+        "openmage",
         "magento1",
         "meta",
         "facebook",
@@ -13,7 +14,6 @@
     ],
     "require": {
         "php": ">=8.3",
-        "mahocommerce/maho": "^26.5",
         "hirale/queue": "^3.0 || dev-master",
         "facebook/php-business-sdk": "*",
         "jaybizzle/crawler-detect": "^1.2"
@@ -21,18 +21,22 @@
     "require-dev": {
         "phpunit/phpunit": "^10.5"
     },
-    "config": {
-        "allow-plugins": {
-            "mahocommerce/maho-composer-plugin": true
-        }
-    },
     "autoload-dev": {
         "psr-4": {
             "HiraleMetaConversions\\Tests\\": "tests/"
         }
     },
     "extra": {
-        "maho-module-dir": "app/code/community/Hirale/MetaConversions"
+        "map": [
+            [
+                "app/etc/modules/Hirale_MetaConversions.xml",
+                "app/etc/modules/Hirale_MetaConversions.xml"
+            ],
+            [
+                "app/code/community/Hirale/MetaConversions",
+                "app/code/community/Hirale/MetaConversions"
+            ]
+        ]
     },
     "scripts": {
         "test": "phpunit"
@@ -46,5 +50,13 @@
         "files": [
             "lib/facebook-sdk-autoload-shim.php"
         ]
+    },
+    "conflict": {
+        "mahocommerce/maho": "<26.5",
+        "openmage/magento-lts": "<20.17"
+    },
+    "suggest": {
+        "mahocommerce/maho": "^26.5 — the Maho platform (alternatively openmage/magento-lts >=20.17)",
+        "magento-hackathon/magento-composer-installer": "Deploys extra.map into the OpenMage project (resolves at 1.3.2; see the hirale/queue README — Maho needs no installer plugin)"
     }
 }

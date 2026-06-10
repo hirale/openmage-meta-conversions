@@ -7,30 +7,6 @@ namespace HiraleMetaConversions\Tests\Support;
 use FacebookAds\Object\ServerSide\Event;
 use Throwable;
 
-class QueueStub
-{
-    /** @var list<array{handler:string,payload:array<string, mixed>,options:array<string, mixed>}> */
-    public array $calls = [];
-
-    public ?Throwable $nextException = null;
-
-    /**
-     * @param array<string, mixed> $payload
-     * @param array<string, mixed> $options
-     */
-    public function enqueue(string $handler, array $payload, array $options = []): string
-    {
-        $this->calls[] = ['handler' => $handler, 'payload' => $payload, 'options' => $options];
-        if ($this->nextException !== null) {
-            $e = $this->nextException;
-            $this->nextException = null;
-            throw $e;
-        }
-
-        return 'fake-job-id';
-    }
-}
-
 class HttpHelperStub
 {
     public string $remoteAddr = '127.0.0.1';
