@@ -25,19 +25,28 @@ You can check more events in the [events section](https://developers.facebook.co
 
 ## Install
 
-> [!NOTE]
-> This module depends on [`openmage-redis-queue`](https://github.com/hirale/openmage-redis-queue). It has been added to composer requirements.
+Requires [`hirale/queue`](https://github.com/hirale/queue) `^3.0`
+(pulled in automatically).
 
-### Install with [Magento Composer Installer](https://github.com/Cotya/magento-composer-installer)
+**Maho** (26.5+):
 
 ```bash
 composer require hirale/openmage-meta-conversions
 ```
 
+**OpenMage** (20.17+, PHP 8.3+) — one-time tweaks first; details in the
+[hirale/queue README](https://github.com/hirale/queue#openmage-one-time-composer-adjustments):
+
+```bash
+composer config platform.php 8.3
+composer config allow-plugins.hirale/magento-module-installer true
+composer require hirale/magento-module-installer hirale/openmage-meta-conversions
+```
+
 ## Usage
 
 ### Setup
-1. This module requires [openmage-redis-queue](https://github.com/hirale/openmage-redis-queue) module, please take a look before you install this module.
+1. This module requires the [hirale/queue](https://github.com/hirale/queue) module — configure its backend first (System > Configuration > Hirale > Queue).
 2. Generate an access token. See [https://developers.facebook.com/docs/marketing-api/conversions-api/get-started](https://developers.facebook.com/docs/marketing-api/conversions-api/get-started).
 3. Go to system config `System > Configuration > Sales > Meta API > Conversions API`. Insert the parameters from step 1, save.
 
