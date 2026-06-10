@@ -20,6 +20,9 @@
             <handlers>
                 <Hirale_MetaConversions_Message_CapiEventMessage>metaconversions/api</Hirale_MetaConversions_Message_CapiEventMessage>
             </handlers>
+            <routing>
+                <Hirale_MetaConversions_Message_CapiEventMessage>analytics</Hirale_MetaConversions_Message_CapiEventMessage>
+            </routing>
         </hirale_queue>
     </global>
     <frontend>
