@@ -38,6 +38,13 @@
         "test": "phpunit"
     },
     "authors": [
-        { "name": "Hirale" }
-    ]
+        {
+            "name": "Hirale"
+        }
+    ],
+    "autoload": {
+        "files": [
+            "lib/facebook-sdk-autoload-shim.php"
+        ]
+    }
 }
