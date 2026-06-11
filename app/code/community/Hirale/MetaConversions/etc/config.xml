@@ -25,6 +25,14 @@
             </routing>
         </hirale_queue>
     </global>
+    <default>
+        <meta>
+            <conversions>
+                <enabled>0</enabled>
+                <debug_mode>0</debug_mode>
+            </conversions>
+        </meta>
+    </default>
     <frontend>
         <events>
             <sales_quote_item_save_after>

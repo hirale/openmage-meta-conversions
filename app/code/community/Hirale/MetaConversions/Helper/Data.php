@@ -5,6 +5,8 @@ declare(strict_types=1);
 use FacebookAds\Object\ServerSide\ActionSource;
 use FacebookAds\Object\ServerSide\Content;
 use FacebookAds\Object\ServerSide\Gender;
+use FacebookAds\Object\ServerSide\Normalizer;
+use FacebookAds\Object\ServerSide\Util;
 
 class Hirale_MetaConversions_Helper_Data extends Mage_Core_Helper_Abstract
 {
@@ -51,7 +53,12 @@ class Hirale_MetaConversions_Helper_Data extends Mage_Core_Helper_Abstract
         $key = $this->_cacheKey($storeId);
         if (!array_key_exists($key, $this->_accessToken)) {
             $value = Mage::getStoreConfig('meta/conversions/access_token', $storeId);
-            $this->_accessToken[$key] = is_string($value) && $value !== '' ? $value : null;
+            // The admin field uses adminhtml/system_config_backend_encrypted,
+            // so the stored value must be decrypted before use.
+            if (is_string($value) && $value !== '') {
+                $value = (string) Mage::helper('core')->decrypt($value);
+            }
+            $this->_accessToken[$key] = is_string($value) && trim($value) !== '' ? trim($value) : null;
         }
 
         return $this->_accessToken[$key];
@@ -100,6 +107,11 @@ class Hirale_MetaConversions_Helper_Data extends Mage_Core_Helper_Abstract
     }
 
     /**
+     * Build the CAPI user_data payload. PII fields are normalized and SHA-256
+     * hashed here — at capture time — so the queue backend never stores
+     * cleartext customer data; client_ip_address / client_user_agent / fbp /
+     * fbc stay raw because Meta requires them unhashed.
+     *
      * @return array<string, mixed>
      */
     public function prepareUserData($customer = null): array
@@ -117,34 +129,72 @@ class Hirale_MetaConversions_Helper_Data extends Mage_Core_Helper_Abstract
         }
         if ($customer) {
             $address = method_exists($customer, 'getDefaultBillingAddress') ? $customer->getDefaultBillingAddress() : null;
-            $userData['email'] = (string) $customer->getEmail();
-            $userData['first_name'] = (string) $customer->getFirstname();
-            $userData['last_name'] = (string) $customer->getLastname();
+            $this->_addHashedField($userData, 'email', 'em', $customer->getEmail());
+            $this->_addHashedField($userData, 'first_name', 'fn', $customer->getFirstname());
+            $this->_addHashedField($userData, 'last_name', 'ln', $customer->getLastname());
 
             if ($customer->getId()) {
+                // Kept raw (the SDK only dedups external_id): the browser-side
+                // Pixel sends the raw customer id, and hashing one side only
+                // would break the Pixel↔CAPI identity match.
                 $userData['external_id'] = (string) $customer->getId();
             }
 
             $gender = $this->_mapGender($customer->getGender());
             if ($gender !== null) {
-                $userData['gender'] = $gender;
+                $this->_addHashedField($userData, 'gender', 'ge', $gender);
             }
 
             $dateOfBirth = $this->_formatDateOfBirth($customer->getDateOfBirth());
             if ($dateOfBirth !== null) {
-                $userData['date_of_birth'] = $dateOfBirth;
+                $this->_addHashedField($userData, 'date_of_birth', 'db', $dateOfBirth);
             }
 
             if ($address) {
-                $userData['phone'] = (string) $address->getTelephone();
-                $userData['city'] = (string) $address->getCity();
-                $userData['state'] = (string) $address->getRegion();
-                $userData['zip_code'] = (string) $address->getPostcode();
-                $userData['country_code'] = (string) $address->getCountryId();
+                $this->_addHashedField($userData, 'phone', 'ph', $address->getTelephone());
+                $this->_addHashedField($userData, 'city', 'ct', $address->getCity());
+                $this->_addHashedField($userData, 'state', 'st', $address->getRegion());
+                $this->_addHashedField($userData, 'zip_code', 'zp', $address->getPostcode());
+                $this->_addHashedField($userData, 'country_code', 'country', $address->getCountryId());
             }
         }
 
         return $userData;
+    }
+
+    /**
+     * Normalize + SHA-256 one PII value with the SDK's own routines and add
+     * it under $key. The worker-side UserData::normalize() detects the 64-hex
+     * digest (Util::isHashed) and passes it through unchanged, so the payload
+     * Meta receives is byte-identical to worker-side hashing.
+     *
+     * Empty values are omitted entirely (hashing '' would send a junk-match
+     * digest Meta cannot use), and values the SDK normalizer rejects (e.g. a
+     * malformed email) are dropped rather than allowed to break the
+     * storefront request.
+     *
+     * @param array<string, mixed> $userData
+     * @param string $key UserData constructor key (email, phone, ...)
+     * @param string $sdkField SDK Normalizer field code (em, ph, ...)
+     * @param mixed $value
+     */
+    private function _addHashedField(array &$userData, string $key, string $sdkField, $value): void
+    {
+        $value = trim((string) $value);
+        if ($value === '') {
+            return;
+        }
+
+        try {
+            $normalized = Normalizer::normalize($sdkField, $value);
+        } catch (Exception $e) {
+            return;
+        }
+        if ($normalized === null || $normalized === '') {
+            return;
+        }
+
+        $userData[$key] = (string) Util::hash($normalized);
     }
 
     /**

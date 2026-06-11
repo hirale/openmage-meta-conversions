@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <config>
     <sections>
-        <meta translate="label">
+        <meta translate="label" module="metaconversions">
             <label>Meta API</label>
             <tab>sales</tab>
             <frontend_type>text</frontend_type>
@@ -38,9 +38,11 @@
                                 <enabled>1</enabled>
                             </depends>
                         </pixel_id>
-                        <access_token translate="label">
+                        <access_token translate="label comment">
                             <label>Access Token</label>
-                            <frontend_type>text</frontend_type>
+                            <frontend_type>obscure</frontend_type>
+                            <backend_model>adminhtml/system_config_backend_encrypted</backend_model>
+                            <comment>Stored encrypted. After upgrading from a version that stored it as plain text, re-enter and save the token once.</comment>
                             <sort_order>30</sort_order>
                             <show_in_default>1</show_in_default>
                             <show_in_website>1</show_in_website>

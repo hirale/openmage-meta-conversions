@@ -15,7 +15,7 @@
     "require": {
         "php": ">=8.3",
         "hirale/queue": "^3.0 || dev-master",
-        "facebook/php-business-sdk": "*",
+        "facebook/php-business-sdk": "^25.0",
         "jaybizzle/crawler-detect": "^1.2"
     },
     "require-dev": {

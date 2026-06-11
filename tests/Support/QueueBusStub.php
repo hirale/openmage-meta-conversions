@@ -69,3 +69,16 @@ namespace Symfony\Component\Messenger\Stamp {
         }
     }
 }
+
+namespace Symfony\Component\Messenger\Exception {
+    if (!class_exists(UnrecoverableMessageHandlingException::class)) {
+        /**
+         * Stub for the Messenger exception the CAPI handler throws to mark
+         * permanently failing messages (bad token / revoked permission). The
+         * real symfony/messenger package is not installed in the unit suite.
+         */
+        class UnrecoverableMessageHandlingException extends \RuntimeException
+        {
+        }
+    }
+}

@@ -52,115 +52,72 @@ composer require hirale/magento-module-installer hirale/openmage-meta-conversion
 
 ### Debug
 
-Enable Debug Mode in system config, then check your system logs.
+Enable Debug Mode in system config, then check `var/log/meta_conversions.log`.
+Each processed queue message logs two entries: the event batch (envelopes +
+custom data — `user_data` is deliberately never written to logs, and PII is
+already SHA-256 hashed before it even reaches the queue) and the Graph API
+response.
 
 ```log
-2024-06-10T18:28:24+00:00 DEBUG (7): FacebookAds\Object\ServerSide\Event Object
+2026-06-11T10:00:00+00:00 DEBUG (7): Array
 (
-    [container:protected] => Array
+    [store_id] => 1
+    [events] => Array
         (
-            [event_name] => PageView
-            [event_time] => 1718044092
-            [event_source_url] => https://example.com/customer/account/index/
-            [opt_out] => 
-            [event_id] => 666745bcdd76a
-            [user_data] => FacebookAds\Object\ServerSide\UserData Object
+            [0] => Array
                 (
-                    [container:protected] => Array
+                    [event] => Array
                         (
-                            [emails] => Array
-                                (
-                                    [0] => ok@example.com
-                                )
+                            [event_time] => 1718044092
+                            [event_source_url] => https://example.com/some-product.html
+                            [action_source] => website
+                            [event_id] => 666745bcdd76a
+                            [event_name] => ViewContent
+                        )
 
-                            [phones] => Array
-                                (
-                                    [0] => 1234567894
-                                )
-
-                            [genders] => Array
-                                (
-                                    [0] => f
-                                )
-
-                            [last_names] => Array
-                                (
-                                    [0] => ok
-                                )
-
-                            [first_names] => Array
-                                (
-                                    [0] => ok
-                                )
-
-                            [cities] => Array
-                                (
-                                    [0] => ok
-                                )
-
-                            [states] => Array
-                                (
-                                    [0] => Alaska
-                                )
-
-                            [country_codes] => Array
-                                (
-                                    [0] => US
-                                )
-
-                            [zip_codes] => Array
-                                (
-                                    [0] => 10010
-                                )
-
-                            [client_ip_address] => 172.20.0.1
-                            [client_user_agent] => Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36
-                            [fbc] => 
-                            [fbp] => fb.1.17984613648566.610809845
-                            [subscription_id] => 
-                            [fb_login_id] => 
-                            [lead_id] => 
-                            [f5first] => 
-                            [f5last] => 
-                            [fi] => 
-                            [dobd] => 
-                            [dobm] => 
-                            [doby] => 
-                            [madid] => 
-                            [anon_id] => 
-                            [ctwa_clid] => 
-                            [page_id] => 
+                    [custom_data] => Array
+                        (
+                            [currency] => USD
+                            [content_type] => product
+                            [content_ids] => Array ( [0] => SKU-9 )
                         )
 
                 )
 
-            [custom_data] => 
-            [data_processing_options] => 
-            [data_processing_options_country] => 
-            [data_processing_options_state] => 
-            [action_source] => website
-            [app_data] => 
-            [advanced_measurement_table] => 
-            [messaging_channel] => 
+            [1] => Array
+                (
+                    [event] => Array
+                        (
+                            [event_name] => PageView
+                        )
+
+                    [custom_data] => 
+                )
+
         )
 
 )
 
-2024-06-10T18:28:24+00:00 DEBUG (7): FacebookAds\Object\ServerSide\EventResponse Object
+2026-06-11T10:00:00+00:00 DEBUG (7): FacebookAds\Object\ServerSide\EventResponse Object
 (
     [container:protected] => Array
         (
-            [events_received] => 1
-            [messages] => Array
-                (
-                )
-
+            [events_received] => 2
+            [messages] => Array ( )
             [fbtrace_id] => AkuJqnm2pr421jM7d89SRqa
-            [custom_endpoint_responses] => 
         )
 
 )
 ```
+
+## Upgrading
+
+- The access token is now stored encrypted (`adminhtml/system_config_backend_encrypted`).
+  After upgrading, re-enter and save the token once in system config.
+- The queue message schema changed (one message now carries all events of a
+  request, and PII is hashed before enqueueing). Let the queue worker drain
+  pending metaconversions messages before deploying the upgrade; messages
+  enqueued by the old version cannot be processed by the new handler.
 
 ## License
 

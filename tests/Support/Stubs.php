@@ -98,21 +98,154 @@ class AppStub
 
 class RecordingApi extends \Hirale_MetaConversions_Model_Api
 {
-    /** @var list<array{access_token:string,pixel_id:string,event:Event,debug_mode:bool}> */
+    /** @var list<array{access_token:string,pixel_id:string,events:list<Event>,debug_mode:bool}> */
     public array $sends = [];
 
     public mixed $nextResponse = null;
 
+    public ?Throwable $nextThrowable = null;
+
+    /** @param list<Event> $events */
     #[\Override]
-    protected function _sendEvent(string $accessToken, string $pixelId, Event $event, bool $debugMode = false): mixed
+    protected function _sendEvents(string $accessToken, string $pixelId, array $events, bool $debugMode = false): mixed
     {
+        if ($this->nextThrowable !== null) {
+            $e = $this->nextThrowable;
+            $this->nextThrowable = null;
+            throw $e;
+        }
         $this->sends[] = [
             'access_token' => $accessToken,
             'pixel_id' => $pixelId,
-            'event' => $event,
+            'events' => $events,
             'debug_mode' => $debugMode,
         ];
         return $this->nextResponse;
+    }
+}
+
+class CoreHelperStub
+{
+    /** @var list<string> */
+    public array $decryptCalls = [];
+
+    /**
+     * Mimics Mage_Core_Helper_Data::decrypt for the unit suite: values
+     * prefixed with "enc:" decrypt to the rest of the string, anything else
+     * passes through unchanged (covers tests that store plain values).
+     */
+    public function decrypt(string $value): string
+    {
+        $this->decryptCalls[] = $value;
+        return str_starts_with($value, 'enc:') ? substr($value, 4) : $value;
+    }
+}
+
+class AddressStub
+{
+    public function __construct(
+        private string $telephone = '',
+        private string $city = '',
+        private string $region = '',
+        private string $postcode = '',
+        private string $countryId = '',
+    ) {}
+
+    public function getTelephone(): string
+    {
+        return $this->telephone;
+    }
+
+    public function getCity(): string
+    {
+        return $this->city;
+    }
+
+    public function getRegion(): string
+    {
+        return $this->region;
+    }
+
+    public function getPostcode(): string
+    {
+        return $this->postcode;
+    }
+
+    public function getCountryId(): string
+    {
+        return $this->countryId;
+    }
+}
+
+class RequestStub
+{
+    /** @param array<string, mixed> $params */
+    public function __construct(
+        private string $moduleName,
+        private string $controllerName,
+        private string $actionName,
+        private array $params = [],
+    ) {}
+
+    public function getModuleName(): string
+    {
+        return $this->moduleName;
+    }
+
+    public function getControllerName(): string
+    {
+        return $this->controllerName;
+    }
+
+    public function getActionName(): string
+    {
+        return $this->actionName;
+    }
+
+    public function getParam(string $key): mixed
+    {
+        return $this->params[$key] ?? null;
+    }
+}
+
+class ResponseStub
+{
+    /** @param list<string> $bodySegments */
+    public function __construct(
+        private int $statusCode = 200,
+        private array $bodySegments = [],
+    ) {}
+
+    public function getHttpResponseCode(): int
+    {
+        return $this->statusCode;
+    }
+
+    /**
+     * Mirrors Zend_Controller_Response_Abstract::getBody(): true returns the
+     * raw segment array, false the concatenated string.
+     */
+    public function getBody(bool $spec = false): array|string
+    {
+        return $spec ? $this->bodySegments : implode('', $this->bodySegments);
+    }
+}
+
+class RouteAppStub
+{
+    public function __construct(
+        private RequestStub $request,
+        private ResponseStub $response,
+    ) {}
+
+    public function getRequest(): RequestStub
+    {
+        return $this->request;
+    }
+
+    public function getResponse(): ResponseStub
+    {
+        return $this->response;
     }
 }
 
@@ -376,11 +509,17 @@ class CustomerStub
         private $gender = null,
         private string $dateOfBirth = '',
         private ?object $billingAddress = null,
+        private ?int $storeId = null,
     ) {}
 
     public function getId(): ?int
     {
         return $this->id;
+    }
+
+    public function getStoreId(): ?int
+    {
+        return $this->storeId;
     }
 
     public function getEmail(): string

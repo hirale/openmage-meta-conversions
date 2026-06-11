@@ -7,8 +7,19 @@ use Jaybizzle\CrawlerDetect\CrawlerDetect;
 
 class Hirale_MetaConversions_Model_Observer
 {
-    protected ?Hirale_MetaConversions_Helper_Data $helper = null;
-    protected ?CrawlerDetect $CrawlerDetect = null;
+    protected Hirale_MetaConversions_Helper_Data $helper;
+    protected ?CrawlerDetect $crawlerDetect = null;
+    protected ?bool $isBotResult = null;
+
+    /**
+     * Quote item ids already reported during this request.
+     * sales_quote_item_save_after fires again for the same item while totals
+     * are collected; this per-request singleton keeps the dedup state as an
+     * instance property instead of going through the global registry.
+     *
+     * @var array<string, true>
+     */
+    protected array $processedQuoteItemIds = [];
 
     public function __construct()
     {
@@ -34,12 +45,11 @@ class Hirale_MetaConversions_Model_Observer
         if ($item->getQuoteId() != $quote->getId()) {
             return;
         }
-        $processedProductsRegistry = Mage::registry('processed_quote_items_for_metaconversions') ?? new ArrayObject();
-        if ($processedProductsRegistry->offsetExists($item->getId())) {
+        $itemId = (string) $item->getId();
+        if (isset($this->processedQuoteItemIds[$itemId])) {
             return;
         }
-        $processedProductsRegistry[$item->getId()] = true;
-        Mage::register('processed_quote_items_for_metaconversions', $processedProductsRegistry, true);
+        $this->processedQuoteItemIds[$itemId] = true;
 
         $addedQty = 0;
         if ($item->isObjectNew()) {
@@ -66,9 +76,8 @@ class Hirale_MetaConversions_Model_Observer
             ];
 
             $this->addToQueue(
-                $this->buildEvent('AddToCart'),
+                [$this->buildEventEntry('AddToCart', $customData)],
                 $this->helper->prepareUserData(),
-                $customData,
                 $storeId,
             );
         }
@@ -110,9 +119,8 @@ class Hirale_MetaConversions_Model_Observer
             'value' => $this->helper->formatPrice($value),
         ];
         $this->addToQueue(
-            $this->buildEvent('AddToWishlist'),
+            [$this->buildEventEntry('AddToWishlist', $customData)],
             $this->helper->prepareUserData(),
-            $customData,
             $storeId,
         );
     }
@@ -125,9 +133,8 @@ class Hirale_MetaConversions_Model_Observer
             return;
         }
         $this->addToQueue(
-            $this->buildEvent('CompleteRegistration'),
+            [$this->buildEventEntry('CompleteRegistration')],
             $this->helper->prepareUserData($customer),
-            null,
             $storeId,
         );
     }
@@ -175,32 +182,49 @@ class Hirale_MetaConversions_Model_Observer
                 }
                 break;
             case 'catalogsearch_result_index':
+                $q = $request->getParam('q');
                 $eventName = 'Search';
-                $customData = $this->prepareSearchCustomData($currency, $request->getParam('q'));
+                $customData = $this->prepareSearchCustomData($currency, is_string($q) ? $q : '');
                 break;
         }
-        $userData = $this->helper->prepareUserData();
 
+        $events = [];
         if ($eventName && $customData) {
-            $this->addToQueue(
-                $this->buildEvent($eventName),
-                $userData,
-                $customData,
-                $storeId,
-            );
+            $events[] = $this->buildEventEntry($eventName, $customData);
+        }
+        if ($this->isHtmlPageResponse($observer->getEvent()->getApp()->getResponse())) {
+            $events[] = $this->buildEventEntry('PageView');
         }
 
-        $response = $observer->getEvent()->getApp()->getResponse();
-        $body = substr($response->getBody(), 0, 100);
-        $statusCode = $response->getHttpResponseCode();
-        if (strpos($body, '<!DOCTYPE html') !== false && $statusCode == 200) {
-            $this->addToQueue(
-                $this->buildEvent('PageView'),
-                $userData,
-                null,
-                $storeId,
-            );
+        // prepareUserData (and its customer address lookup) runs only when at
+        // least one event will actually be dispatched — never for AJAX calls,
+        // redirects, or error responses. All events of the request share one
+        // message and therefore one Graph API call.
+        if ($events) {
+            $this->addToQueue($events, $this->helper->prepareUserData(), $storeId);
         }
+    }
+
+    /**
+     * PageView fires only for successfully rendered full HTML pages. The
+     * doctype sniff is case-insensitive ("<!DOCTYPE html" and the HTML5-
+     * canonical "<!doctype html>" both match) and reads only the first body
+     * segment instead of concatenating the entire response body into a copy.
+     *
+     * @param Mage_Core_Controller_Response_Http $response untyped because the
+     *        concrete response class differs between OpenMage and Maho.
+     */
+    protected function isHtmlPageResponse($response): bool
+    {
+        if ((int) $response->getHttpResponseCode() !== 200) {
+            return false;
+        }
+        $body = $response->getBody(true);
+        if (is_array($body)) {
+            $body = (string) reset($body);
+        }
+
+        return stripos(substr((string) $body, 0, 100), '<!doctype html') !== false;
     }
 
     /**
@@ -220,6 +244,18 @@ class Hirale_MetaConversions_Model_Observer
     }
 
     /**
+     * Wrap one event envelope with its CustomData payload in the shape
+     * carried by Hirale_MetaConversions_Message_CapiEventMessage::$events.
+     *
+     * @param array<string, mixed>|null $customData
+     * @return array{event: array<string, mixed>, custom_data: array<string, mixed>|null}
+     */
+    protected function buildEventEntry(string $eventName, ?array $customData = null): array
+    {
+        return ['event' => $this->buildEvent($eventName), 'custom_data' => $customData];
+    }
+
+    /**
      * Resolve the storefront store id, defaulting to the current store when
      * the candidate is missing or non-positive.
      */
@@ -233,7 +269,14 @@ class Hirale_MetaConversions_Model_Observer
 
     protected function isBot(): bool
     {
-        return $this->getCrawlerDetect()->isCrawler(Mage::helper('core/http')->getHttpUserAgent());
+        // The user agent cannot change within a request, so the (relatively
+        // expensive) CrawlerDetect regex runs at most once even when several
+        // events fire on the same page.
+        if ($this->isBotResult === null) {
+            $this->isBotResult = $this->getCrawlerDetect()->isCrawler(Mage::helper('core/http')->getHttpUserAgent());
+        }
+
+        return $this->isBotResult;
     }
 
     protected function canSend(?int $storeId = null): bool
@@ -242,25 +285,24 @@ class Hirale_MetaConversions_Model_Observer
     }
 
     /**
-     * Enqueue a single CAPI event onto the Hirale queue. The store id is
-     * carried as `_store_id` in the payload so the worker resolves
-     * access_token / pixel_id against the originating store; both
-     * `_store_id` and `_debug_mode` are stripped before forwarding to
-     * Meta.
+     * Enqueue the CAPI events captured for the current request as one queue
+     * message. The store id is carried in the payload so the worker resolves
+     * access_token / pixel_id against the originating store.
      *
-     * @param array<string, mixed> $event
+     * @param list<array{event: array<string, mixed>, custom_data: array<string, mixed>|null}> $events
      * @param array<string, mixed> $userData
-     * @param array<string, mixed>|null $customData
      */
-    protected function addToQueue(array $event, array $userData, ?array $customData = null, ?int $storeId = null): void
+    protected function addToQueue(array $events, array $userData, ?int $storeId = null): void
     {
+        if ($events === []) {
+            return;
+        }
         try {
             $storeId = $this->resolveStoreId($storeId);
             Bus::dispatch(new Hirale_MetaConversions_Message_CapiEventMessage(
-                event: $event,
+                events: $events,
                 userData: $userData,
-                customData: $customData,
-                storeId: (int) $storeId,
+                storeId: $storeId,
                 debugMode: $this->helper->isDebugMode($storeId),
             ));
         } catch (Exception $e) {
@@ -268,13 +310,13 @@ class Hirale_MetaConversions_Model_Observer
         }
     }
 
-
-    protected function getCrawlerDetect()
+    protected function getCrawlerDetect(): CrawlerDetect
     {
-        if ($this->CrawlerDetect === null) {
-            $this->CrawlerDetect = new CrawlerDetect();
+        if ($this->crawlerDetect === null) {
+            $this->crawlerDetect = new CrawlerDetect();
         }
-        return $this->CrawlerDetect;
+
+        return $this->crawlerDetect;
     }
 
     /**

@@ -9,11 +9,15 @@ use HiraleMetaConversions\Tests\Support\CartItemStub;
 use HiraleMetaConversions\Tests\Support\CategoryStub;
 use HiraleMetaConversions\Tests\Support\CheckoutSessionStub;
 use HiraleMetaConversions\Tests\Support\CookieStub;
+use HiraleMetaConversions\Tests\Support\CustomerStub;
 use HiraleMetaConversions\Tests\Support\HttpHelperStub;
 use HiraleMetaConversions\Tests\Support\LayoutStub;
 use HiraleMetaConversions\Tests\Support\ProductStub;
 use HiraleMetaConversions\Tests\Support\QuoteItemStub;
 use HiraleMetaConversions\Tests\Support\QuoteStub;
+use HiraleMetaConversions\Tests\Support\RequestStub;
+use HiraleMetaConversions\Tests\Support\ResponseStub;
+use HiraleMetaConversions\Tests\Support\RouteAppStub;
 use HiraleMetaConversions\Tests\Support\SearchListBlockStub;
 use HiraleMetaConversions\Tests\Support\UrlHelperStub;
 use HiraleMetaConversions\Tests\Support\WishlistItemStub;
@@ -21,12 +25,18 @@ use PHPUnit\Framework\TestCase;
 
 class ObserverTest extends TestCase
 {
+    private const BROWSER_UA =
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+
     protected function setUp(): void
     {
         \Mage::reset();
         \Hirale\Queue\Bus::reset();
         \Mage::$helpers['metaconversions'] = new \Hirale_MetaConversions_Helper_Data();
         \Mage::$helpers['core/http'] = new HttpHelperStub();
+        // A real browser UA by default so CrawlerDetect lets events through;
+        // the bot test overrides it.
+        \Mage::$helpers['core/http']->userAgent = self::BROWSER_UA;
         \Mage::$helpers['core/url'] = new UrlHelperStub();
         \Mage::$singletons['core/cookie'] = new CookieStub();
         \Mage::$singletons['customer/session'] = new \Mage_Customer_Model_Session();
@@ -46,19 +56,35 @@ class ObserverTest extends TestCase
         \Hirale\Queue\Bus::reset();
     }
 
+    private function routeObserver(
+        string $module,
+        string $controller,
+        string $action,
+        ResponseStub $response,
+        array $params = [],
+    ): \Varien_Event_Observer {
+        $app = new RouteAppStub(new RequestStub($module, $controller, $action, $params), $response);
+
+        return new \Varien_Event_Observer(new \Varien_Event(['app' => $app]));
+    }
+
     public function testAddToQueueDispatchesCapiMessageWithStoreContext(): void
     {
         $observer = new ObserverAccessor();
         $observer->callAddToQueue(
             [
-                'event_name' => 'AddToCart',
-                'event_id' => 'evt-123',
-                'event_time' => 1700000000,
-                'event_source_url' => 'https://example.test/cart',
-                'action_source' => 'website',
+                [
+                    'event' => [
+                        'event_name' => 'AddToCart',
+                        'event_id' => 'evt-123',
+                        'event_time' => 1700000000,
+                        'event_source_url' => 'https://example.test/cart',
+                        'action_source' => 'website',
+                    ],
+                    'custom_data' => ['currency' => 'USD', 'value' => 9.99],
+                ],
             ],
             ['client_ip_address' => '1.2.3.4'],
-            ['currency' => 'USD', 'value' => 9.99],
             7,
         );
 
@@ -67,9 +93,10 @@ class ObserverTest extends TestCase
         self::assertInstanceOf(\Hirale_MetaConversions_Message_CapiEventMessage::class, $message);
         self::assertSame(7, $message->storeId);
         self::assertFalse($message->debugMode);
-        self::assertSame('AddToCart', $message->event['event_name']);
-        self::assertSame('evt-123', $message->event['event_id']);
-        self::assertSame(['currency' => 'USD', 'value' => 9.99], $message->customData);
+        self::assertCount(1, $message->events);
+        self::assertSame('AddToCart', $message->events[0]['event']['event_name']);
+        self::assertSame('evt-123', $message->events[0]['event']['event_id']);
+        self::assertSame(['currency' => 'USD', 'value' => 9.99], $message->events[0]['custom_data']);
     }
 
     public function testAddToQueueFallsBackToCurrentStoreWhenStoreIdMissing(): void
@@ -79,13 +106,20 @@ class ObserverTest extends TestCase
 
         $observer = new ObserverAccessor();
         $observer->callAddToQueue(
-            ['event_name' => 'PageView', 'event_id' => 'evt-x'],
+            [['event' => ['event_name' => 'PageView', 'event_id' => 'evt-x'], 'custom_data' => null]],
             [],
-            null,
             null,
         );
 
         self::assertSame(42, \Hirale\Queue\Bus::$dispatches[0]['message']->storeId);
+    }
+
+    public function testAddToQueueSkipsEmptyEventList(): void
+    {
+        $observer = new ObserverAccessor();
+        $observer->callAddToQueue([], [], 1);
+
+        self::assertSame([], \Hirale\Queue\Bus::$dispatches);
     }
 
     public function testAddToQueueSwallowsDispatchExceptions(): void
@@ -94,9 +128,8 @@ class ObserverTest extends TestCase
 
         $observer = new ObserverAccessor();
         $observer->callAddToQueue(
-            ['event_name' => 'AddToCart', 'event_id' => 'evt-1'],
+            [['event' => ['event_name' => 'AddToCart', 'event_id' => 'evt-1'], 'custom_data' => null]],
             [],
-            null,
             1,
         );
 
@@ -153,8 +186,6 @@ class ObserverTest extends TestCase
 
     public function testAddToCartValueReflectsOnlyAddedUnitsNotWholeLine(): void
     {
-        \Mage::$helpers['core/http']->userAgent =
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
         $quote = new QuoteStub([], 0.0, 100, 1);
         \Mage::$singletons['checkout/session'] = new CheckoutSessionStub($quote);
 
@@ -176,16 +207,38 @@ class ObserverTest extends TestCase
         $observer->addToCart(new \Varien_Event_Observer(new \Varien_Event(['item' => $item])));
 
         self::assertCount(1, \Hirale\Queue\Bus::$dispatches);
-        $customData = \Hirale\Queue\Bus::$dispatches[0]['message']->customData;
+        $customData = \Hirale\Queue\Bus::$dispatches[0]['message']->events[0]['custom_data'];
         // 1 added unit * 10.00 = 10.00, NOT the full base row total (30.00).
         self::assertSame(10.0, $customData['value']);
         self::assertSame(1.0, $customData['contents'][0][1]);
     }
 
+    public function testAddToCartReportsTheSameItemOnlyOncePerRequest(): void
+    {
+        $quote = new QuoteStub([], 0.0, 100, 1);
+        \Mage::$singletons['checkout/session'] = new CheckoutSessionStub($quote);
+
+        $item = new CartItemStub(
+            sku: 'SKU-1',
+            qty: 1.0,
+            basePrice: 10.0,
+            name: 'Item',
+            id: 5,
+            quoteId: 100,
+            storeId: 1,
+        );
+
+        // The same observer instance (a per-request singleton) sees the item
+        // saved twice — e.g. once on add and again during totals collection.
+        $observer = new \Hirale_MetaConversions_Model_Observer();
+        $observer->addToCart(new \Varien_Event_Observer(new \Varien_Event(['item' => $item])));
+        $observer->addToCart(new \Varien_Event_Observer(new \Varien_Event(['item' => $item])));
+
+        self::assertCount(1, \Hirale\Queue\Bus::$dispatches);
+    }
+
     public function testAddToWishlistValueAccountsForItemQuantity(): void
     {
-        \Mage::$helpers['core/http']->userAgent =
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
         // store_id 7 differs from the current store (1) so the assertion below
         // proves the per-item store id is honored. The stub uses magic getters,
         // so a method_exists()-guarded regression would fall back (qty 1 /
@@ -201,12 +254,128 @@ class ObserverTest extends TestCase
 
         self::assertCount(1, \Hirale\Queue\Bus::$dispatches);
         $message = \Hirale\Queue\Bus::$dispatches[0]['message'];
-        $customData = $message->customData;
+        $customData = $message->events[0]['custom_data'];
         // 10.00 * 2 = 20.00 — the item quantity is no longer hardcoded to 1.
         self::assertSame(20.0, $customData['value']);
         self::assertSame(2.0, $customData['contents'][0][1]);
         // Per-item store id is resolved (was dead code under method_exists).
         self::assertSame(7, $message->storeId);
+    }
+
+    public function testCompleteRegistrationSendsHashedCustomerEmail(): void
+    {
+        $customer = new CustomerStub(id: 5, email: 'new@example.test', storeId: 7);
+
+        $observer = new \Hirale_MetaConversions_Model_Observer();
+        $observer->completeRegistration(new \Varien_Event_Observer(new \Varien_Event(['customer' => $customer])));
+
+        self::assertCount(1, \Hirale\Queue\Bus::$dispatches);
+        $message = \Hirale\Queue\Bus::$dispatches[0]['message'];
+        self::assertSame(7, $message->storeId);
+        self::assertSame('CompleteRegistration', $message->events[0]['event']['event_name']);
+        self::assertNull($message->events[0]['custom_data']);
+        // PII leaves the request pre-hashed — the queue never sees the address.
+        self::assertSame(hash('sha256', 'new@example.test'), $message->userData['email']);
+        self::assertSame('5', $message->userData['external_id']);
+    }
+
+    public function testDispatchRouteEventBatchesViewContentAndPageViewIntoOneMessage(): void
+    {
+        \Mage::register('current_product', new ProductStub('SKU-9', 12.5, 'Viewed Product'));
+        \Mage::register('current_category', new CategoryStub('Shoes'));
+
+        $observer = new \Hirale_MetaConversions_Model_Observer();
+        $observer->dispatchRouteEvent($this->routeObserver(
+            'catalog',
+            'product',
+            'view',
+            new ResponseStub(200, ['<!DOCTYPE html><html><body>page</body></html>']),
+        ));
+
+        // One queue message (= one Graph API call) carrying both events.
+        self::assertCount(1, \Hirale\Queue\Bus::$dispatches);
+        $message = \Hirale\Queue\Bus::$dispatches[0]['message'];
+        self::assertCount(2, $message->events);
+        self::assertSame('ViewContent', $message->events[0]['event']['event_name']);
+        self::assertSame(['SKU-9'], $message->events[0]['custom_data']['content_ids']);
+        self::assertSame('Shoes', $message->events[0]['custom_data']['content_category']);
+        self::assertSame('PageView', $message->events[1]['event']['event_name']);
+        self::assertNull($message->events[1]['custom_data']);
+        self::assertSame(self::BROWSER_UA, $message->userData['client_user_agent']);
+    }
+
+    public function testDispatchRouteEventMatchesLowercaseHtml5Doctype(): void
+    {
+        // The HTML5-canonical lowercase form used by many themes; the old
+        // case-sensitive strpos('<!DOCTYPE html') silently dropped PageView here.
+        $observer = new \Hirale_MetaConversions_Model_Observer();
+        $observer->dispatchRouteEvent($this->routeObserver(
+            'cms',
+            'index',
+            'index',
+            new ResponseStub(200, ['<!doctype html><html><body>page</body></html>']),
+        ));
+
+        self::assertCount(1, \Hirale\Queue\Bus::$dispatches);
+        $message = \Hirale\Queue\Bus::$dispatches[0]['message'];
+        self::assertCount(1, $message->events);
+        self::assertSame('PageView', $message->events[0]['event']['event_name']);
+    }
+
+    public function testDispatchRouteEventIgnoresNonHtmlResponsesWithoutTouchingUserData(): void
+    {
+        // Structural laziness assertion: prepareUserData() reads the
+        // customer/session singleton, and the stubbed Mage::getSingleton()
+        // throws for unregistered aliases — so this test only passes when no
+        // user data is built for a request that dispatches nothing (redirects,
+        // AJAX, error pages).
+        unset(\Mage::$singletons['customer/session']);
+
+        $observer = new \Hirale_MetaConversions_Model_Observer();
+        $observer->dispatchRouteEvent($this->routeObserver(
+            'cms',
+            'index',
+            'index',
+            new ResponseStub(302, ['']),
+        ));
+
+        self::assertSame([], \Hirale\Queue\Bus::$dispatches);
+    }
+
+    public function testDispatchRouteEventGuardsNonStringSearchQuery(): void
+    {
+        // ?q[]=x used to put an array into search_string and poison the
+        // queue message; the guard folds it to an empty string.
+        $observer = new \Hirale_MetaConversions_Model_Observer();
+        $observer->dispatchRouteEvent($this->routeObserver(
+            'catalogsearch',
+            'result',
+            'index',
+            new ResponseStub(200, ['<!DOCTYPE html><html></html>']),
+            ['q' => ['x']],
+        ));
+
+        self::assertCount(1, \Hirale\Queue\Bus::$dispatches);
+        $message = \Hirale\Queue\Bus::$dispatches[0]['message'];
+        self::assertSame('Search', $message->events[0]['event']['event_name']);
+        self::assertSame('', $message->events[0]['custom_data']['search_string']);
+    }
+
+    public function testDispatchRouteEventSkipsCrawlerUserAgents(): void
+    {
+        \Mage::$helpers['core/http']->userAgent =
+            'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
+        \Mage::register('current_product', new ProductStub('SKU-9', 12.5, 'Viewed Product'));
+
+        $observer = new \Hirale_MetaConversions_Model_Observer();
+        $observer->dispatchRouteEvent($this->routeObserver(
+            'catalog',
+            'product',
+            'view',
+            new ResponseStub(200, ['<!DOCTYPE html><html></html>']),
+        ));
+
+        self::assertSame([], \Hirale\Queue\Bus::$dispatches);
     }
 
     public function testBuildContentRowCastsNullSkuAndNameToString(): void
@@ -286,13 +455,12 @@ class ObserverTest extends TestCase
 class ObserverAccessor extends \Hirale_MetaConversions_Model_Observer
 {
     /**
-     * @param array<string, mixed> $event
+     * @param list<array{event: array<string, mixed>, custom_data: array<string, mixed>|null}> $events
      * @param array<string, mixed> $userData
-     * @param array<string, mixed>|null $customData
      */
-    public function callAddToQueue(array $event, array $userData, ?array $customData, ?int $storeId): void
+    public function callAddToQueue(array $events, array $userData, ?int $storeId): void
     {
-        $this->addToQueue($event, $userData, $customData, $storeId);
+        $this->addToQueue($events, $userData, $storeId);
     }
 
     /**
