@@ -4,7 +4,12 @@ declare(strict_types=1);
 
 use FacebookAds\Api;
 use FacebookAds\Http\Exception\AuthorizationException;
+use FacebookAds\Http\Exception\ClientException;
+use FacebookAds\Http\Exception\EmptyResponseException;
 use FacebookAds\Http\Exception\PermissionException;
+use FacebookAds\Http\Exception\RequestException;
+use FacebookAds\Http\Exception\ServerException;
+use FacebookAds\Http\Exception\ThrottleException;
 use FacebookAds\Logger\CurlLogger;
 use FacebookAds\Object\ServerSide\CustomData;
 use FacebookAds\Object\ServerSide\Event;
@@ -12,12 +17,20 @@ use FacebookAds\Object\ServerSide\EventRequest;
 use FacebookAds\Object\ServerSide\UserData;
 use Symfony\Component\Messenger\Exception\UnrecoverableMessageHandlingException;
 
+/**
+ * Handler for queued Meta Conversions API uploads.
+ *
+ * Registered twice on purpose: the #[\Maho\Config\MessageHandler] attribute
+ * for Maho's core queue, and <hirale_queue><handlers> in config.xml for
+ * hirale/queue on OpenMage. Each backend ignores the other's registration.
+ */
 class Hirale_MetaConversions_Model_Api
 {
     public const LOG_FILE = 'meta_conversions.log';
 
     private ?Hirale_MetaConversions_Helper_Data $_helper = null;
 
+    #[\Maho\Config\MessageHandler]
     public function __invoke(Hirale_MetaConversions_Message_CapiEventMessage $message): void
     {
         $helper = $this->_getHelper();
@@ -71,14 +84,16 @@ class Hirale_MetaConversions_Model_Api
 
         try {
             $response = $this->_sendEvents($accessToken, $pixelId, $events, $message->debugMode);
-        } catch (AuthorizationException|PermissionException $e) {
-            // A bad token or revoked permission cannot be fixed by retrying;
-            // fail the message permanently instead of burning the queue's
-            // retry schedule on the whole backlog. Transient errors
-            // (ThrottleException, ServerException, network) bubble for retry.
+        } catch (RequestException $e) {
+            if (!$this->_isPermanent($e)) {
+                throw $e;
+            }
+            // A replay of this request reproduces the same rejection, so fail
+            // the message permanently instead of burning the queue's retry
+            // schedule on the whole backlog.
             Mage::log(
                 sprintf(
-                    'Dropped %d CAPI event(s) for store %d, Meta rejected the credentials: %s',
+                    'Dropped %d CAPI event(s) for store %d, Meta rejected the request: %s',
                     count($events),
                     $message->storeId,
                     $e->getMessage(),
@@ -98,6 +113,33 @@ class Hirale_MetaConversions_Model_Api
             Mage::log(['store_id' => $message->storeId, 'events' => $message->events], null, self::LOG_FILE, true);
             Mage::log($response, null, self::LOG_FILE, true);
         }
+    }
+
+    /**
+     * Whether a Graph API rejection can never succeed on replay.
+     *
+     * Classification is by exception class first: the SDK picks the subclass
+     * from Meta's own error code, and Meta answers HTTP 400 for most Graph
+     * errors — rate limits included — so the status alone would strand
+     * retryable failures. The status only decides the leftovers the SDK
+     * leaves as a plain RequestException.
+     */
+    protected function _isPermanent(RequestException $e): bool
+    {
+        if ($e instanceof ThrottleException || $e instanceof ServerException || $e instanceof EmptyResponseException) {
+            return false;
+        }
+
+        // Bad or expired token and invalid parameters (codes 100/190) land on
+        // AuthorizationException, a missing capability on PermissionException,
+        // a duplicate post (code 506) on ClientException.
+        if ($e instanceof AuthorizationException || $e instanceof PermissionException || $e instanceof ClientException) {
+            return true;
+        }
+
+        $status = (int) $e->getHttpStatusCode();
+
+        return $status >= 400 && $status < 500;
     }
 
     /**

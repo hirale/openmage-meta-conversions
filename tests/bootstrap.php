@@ -5,7 +5,13 @@ declare(strict_types=1);
 require_once __DIR__ . '/../vendor/autoload.php';
 
 if (!class_exists('Mage_Core_Helper_Abstract')) {
-    class Mage_Core_Helper_Abstract {}
+    class Mage_Core_Helper_Abstract
+    {
+        public function isModuleEnabled(string $moduleName): bool
+        {
+            return !empty(Mage::$enabledModules[$moduleName]);
+        }
+    }
 }
 
 if (!class_exists('Mage_Customer_Model_Session')) {
@@ -52,6 +58,9 @@ if (!class_exists('Mage')) {
         /** @var list<Throwable> */
         public static array $exceptions = [];
 
+        /** @var array<string, bool> */
+        public static array $enabledModules = [];
+
         public static function reset(): void
         {
             self::$helpers = [];
@@ -62,6 +71,7 @@ if (!class_exists('Mage')) {
             self::$app = null;
             self::$logs = [];
             self::$exceptions = [];
+            self::$enabledModules = [];
         }
 
         public static function helper(string $alias): object
@@ -168,6 +178,7 @@ if (!class_exists('Varien_Event_Observer')) {
 }
 
 require_once __DIR__ . '/Support/QueueBusStub.php';
+require_once __DIR__ . '/Support/MahoQueueStub.php';
 require_once __DIR__ . '/../app/code/community/Hirale/MetaConversions/Helper/Data.php';
 require_once __DIR__ . '/../app/code/community/Hirale/MetaConversions/Message/CapiEventMessage.php';
 require_once __DIR__ . '/../app/code/community/Hirale/MetaConversions/Model/Api.php';

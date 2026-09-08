@@ -9,6 +9,7 @@ use HiraleMetaConversions\Tests\Support\CartItemStub;
 use HiraleMetaConversions\Tests\Support\CategoryStub;
 use HiraleMetaConversions\Tests\Support\CheckoutSessionStub;
 use HiraleMetaConversions\Tests\Support\CookieStub;
+use HiraleMetaConversions\Tests\Support\CoreHelperStub;
 use HiraleMetaConversions\Tests\Support\CustomerStub;
 use HiraleMetaConversions\Tests\Support\HttpHelperStub;
 use HiraleMetaConversions\Tests\Support\LayoutStub;
@@ -33,6 +34,8 @@ class ObserverTest extends TestCase
         \Mage::reset();
         \Hirale\Queue\Bus::reset();
         \Mage::$helpers['metaconversions'] = new \Hirale_MetaConversions_Helper_Data();
+        // The queue bridge probes Mage::helper('core')->isModuleEnabled().
+        \Mage::$helpers['core'] = new CoreHelperStub();
         \Mage::$helpers['core/http'] = new HttpHelperStub();
         // A real browser UA by default so CrawlerDetect lets events through;
         // the bot test overrides it.

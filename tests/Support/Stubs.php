@@ -124,7 +124,7 @@ class RecordingApi extends \Hirale_MetaConversions_Model_Api
     }
 }
 
-class CoreHelperStub
+class CoreHelperStub extends \Mage_Core_Helper_Abstract
 {
     /** @var list<string> */
     public array $decryptCalls = [];

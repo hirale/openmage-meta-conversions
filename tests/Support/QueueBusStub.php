@@ -3,11 +3,12 @@
 declare(strict_types=1);
 
 namespace Hirale\Queue {
-    if (!class_exists(Bus::class)) {
+    if (!class_exists(Bus::class, false)) {
         /**
          * Recording stub for the static Bus accessor from hirale/queue. The
-         * real package is not installed in the unit suite; tests assert
-         * against the recorded dispatches.
+         * stub must win even when a vendor copy of the real package is present,
+         * so the guard does not autoload. Tests assert against the recorded
+         * dispatches.
          */
         class Bus
         {

@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace HiraleMetaConversions\Tests\Unit;
 
 use FacebookAds\Http\Exception\AuthorizationException;
+use FacebookAds\Http\Exception\ClientException;
 use FacebookAds\Http\Exception\RequestException;
 use FacebookAds\Http\Exception\ServerException;
+use FacebookAds\Http\Exception\ThrottleException;
 use FacebookAds\Http\Response;
 use HiraleMetaConversions\Tests\Support\CookieStub;
 use HiraleMetaConversions\Tests\Support\CoreHelperStub;
@@ -232,6 +234,66 @@ class ApiTest extends TestCase
 
         $api = new RecordingApi();
         $api->nextThrowable = new ServerException($this->graphErrorResponse(500, 'An unknown error occurred', null, 1));
+
+        $this->expectException(RequestException::class);
+        $api($this->message([$this->entry('AddToCart')]));
+    }
+
+
+    public function testInvokeMarksDuplicatePostUnrecoverable(): void
+    {
+        \Mage::$config['1']['meta/conversions/access_token'] = 'token-1';
+        \Mage::$config['1']['meta/conversions/pixel_id'] = '111';
+
+        $api = new RecordingApi();
+        // Code 506 — Meta already has this event; a replay is refused again.
+        $api->nextThrowable = new ClientException($this->graphErrorResponse(400, 'Duplicate post', null, 506));
+
+        $this->expectException(UnrecoverableMessageHandlingException::class);
+        $api($this->message([$this->entry('Purchase')]));
+    }
+
+    public function testInvokeMarksGeneric4xxUnrecoverable(): void
+    {
+        \Mage::$config['1']['meta/conversions/access_token'] = 'token-1';
+        \Mage::$config['1']['meta/conversions/pixel_id'] = '111';
+
+        $api = new RecordingApi();
+        // Payload the Graph API refuses: the SDK leaves it a plain
+        // RequestException, so the HTTP status is what classifies it.
+        $api->nextThrowable = new RequestException($this->graphErrorResponse(400, 'Invalid event data', null, 2635));
+
+        try {
+            $api($this->message([$this->entry('AddToCart')]));
+            self::fail('Expected UnrecoverableMessageHandlingException was not thrown.');
+        } catch (UnrecoverableMessageHandlingException $e) {
+            self::assertInstanceOf(RequestException::class, $e->getPrevious());
+        }
+
+        self::assertStringContainsString('Invalid event data', (string) \Mage::$logs[0]['message']);
+    }
+
+    public function testInvokeLetsThrottlingBubbleForRetry(): void
+    {
+        \Mage::$config['1']['meta/conversions/access_token'] = 'token-1';
+        \Mage::$config['1']['meta/conversions/pixel_id'] = '111';
+
+        $api = new RecordingApi();
+        // Meta answers HTTP 400 for rate limits too, so only the exception
+        // class separates this from a permanent payload rejection.
+        $api->nextThrowable = new ThrottleException($this->graphErrorResponse(400, 'User request limit reached', null, 17));
+
+        $this->expectException(ThrottleException::class);
+        $api($this->message([$this->entry('AddToCart')]));
+    }
+
+    public function testInvokeLetsUnclassified5xxBubbleForRetry(): void
+    {
+        \Mage::$config['1']['meta/conversions/access_token'] = 'token-1';
+        \Mage::$config['1']['meta/conversions/pixel_id'] = '111';
+
+        $api = new RecordingApi();
+        $api->nextThrowable = new RequestException($this->graphErrorResponse(503, 'Service unavailable', null, 0));
 
         $this->expectException(RequestException::class);
         $api($this->message([$this->entry('AddToCart')]));
