@@ -6,6 +6,9 @@ use Jaybizzle\CrawlerDetect\CrawlerDetect;
 
 class Hirale_MetaConversions_Model_Observer
 {
+    /** Checkout-session key holding the increment id whose Purchase was already reported. */
+    public const SESSION_REPORTED_PURCHASE = 'meta_reported_purchase_increment_id';
+
     protected Hirale_MetaConversions_Helper_Data $helper;
     protected ?CrawlerDetect $crawlerDetect = null;
     protected ?bool $isBotResult = null;
@@ -30,6 +33,11 @@ class Hirale_MetaConversions_Model_Observer
     }
 
     public function addToCart(Varien_Event_Observer $observer)
+    {
+        $this->guard(fn() => $this->_addToCart($observer));
+    }
+
+    protected function _addToCart(Varien_Event_Observer $observer)
     {
         /** @var Mage_Sales_Model_Quote_Item $item */
         $item = $observer->getEvent()->getItem();
@@ -84,6 +92,11 @@ class Hirale_MetaConversions_Model_Observer
 
     public function addToWishlist(Varien_Event_Observer $observer)
     {
+        $this->guard(fn() => $this->_addToWishlist($observer));
+    }
+
+    protected function _addToWishlist(Varien_Event_Observer $observer)
+    {
         $items = $observer->getEvent()->getItems();
         if (!$items || count($items) === 0) {
             return;
@@ -126,6 +139,11 @@ class Hirale_MetaConversions_Model_Observer
 
     public function completeRegistration(Varien_Event_Observer $observer)
     {
+        $this->guard(fn() => $this->_completeRegistration($observer));
+    }
+
+    protected function _completeRegistration(Varien_Event_Observer $observer)
+    {
         $customer = $observer->getEvent()->getCustomer();
         $storeId = $this->resolveStoreId($customer ? $customer->getStoreId() : null);
         if (!$this->canSend($storeId)) {
@@ -140,9 +158,15 @@ class Hirale_MetaConversions_Model_Observer
 
     public function dispatchRouteEvent(Varien_Event_Observer $observer)
     {
+        $this->guard(fn() => $this->_dispatchRouteEvent($observer));
+    }
+
+    protected function _dispatchRouteEvent(Varien_Event_Observer $observer)
+    {
         $request = $observer->getEvent()->getApp()->getRequest();
         $route = $request->getModuleName() . '_' . $request->getControllerName() . '_' . $request->getActionName();
 
+        $order = null;
         if ($route === 'checkout_onepage_success') {
             $order = Mage::getSingleton('checkout/session')->getLastRealOrder();
             $storeId = $this->resolveStoreId($order ? $order->getStoreId() : null);
@@ -151,6 +175,13 @@ class Hirale_MetaConversions_Model_Observer
         }
 
         if (!$this->canSend($storeId)) {
+            return;
+        }
+
+        // Hoisted above the route switch on purpose: every event below reads
+        // quote or order state that only a rendered page can be trusted to
+        // reflect. PageView used to be the only one guarded.
+        if (!$this->isHtmlPageResponse($observer->getEvent()->getApp()->getResponse())) {
             return;
         }
 
@@ -165,8 +196,10 @@ class Hirale_MetaConversions_Model_Observer
                 break;
 
             case 'checkout_onepage_success':
-                $eventName = 'Purchase';
-                $customData = $this->preparePurchaseCustomData($currency);
+                if ($this->claimPurchaseReport($order)) {
+                    $eventName = 'Purchase';
+                    $customData = $this->preparePurchaseCustomData($currency);
+                }
                 break;
 
             case 'checkout_cart_index':
@@ -191,24 +224,76 @@ class Hirale_MetaConversions_Model_Observer
         if ($eventName && $customData) {
             $events[] = $this->buildEventEntry($eventName, $customData);
         }
-        if ($this->isHtmlPageResponse($observer->getEvent()->getApp()->getResponse())) {
-            $events[] = $this->buildEventEntry('PageView');
-        }
+        $events[] = $this->buildEventEntry('PageView');
 
-        // prepareUserData (and its customer address lookup) runs only when at
-        // least one event will actually be dispatched — never for AJAX calls,
-        // redirects, or error responses. All events of the request share one
+        // prepareUserData (and its customer address lookup) is reached only
+        // past the rendered-page guard, so AJAX calls, redirects and error
+        // responses never pay for it. All events of the request share one
         // message and therefore one Graph API call.
-        if ($events) {
-            $this->addToQueue($events, $this->helper->prepareUserData(), $storeId);
+        $this->addToQueue($events, $this->helper->prepareUserData(), $storeId);
+    }
+
+    /**
+     * Analytics must never break the flow it observes. Every event entry point
+     * runs its body through here, so a payload-building failure is logged and
+     * dropped instead of aborting a cart save or a registration.
+     */
+    protected function guard(callable $work): void
+    {
+        try {
+            $work();
+        } catch (Throwable $e) {
+            Mage::logException($e);
         }
     }
 
     /**
-     * PageView fires only for successfully rendered full HTML pages. The
-     * doctype sniff is case-insensitive ("<!DOCTYPE html" and the HTML5-
-     * canonical "<!doctype html>" both match) and reads only the first body
-     * segment instead of concatenating the entire response body into a copy.
+     * Claim the single Purchase report for an order, or refuse when it was
+     * already made.
+     *
+     * The success route outlives its first render: successAction clears
+     * lastSuccessQuoteId and redirects on a reload, but last_real_order_id
+     * stays on the session (only clearHelperData() drops it, and that runs
+     * when the next checkout starts). getLastRealOrder() therefore keeps
+     * returning the order. Meta cannot absorb the duplicate either: each
+     * dispatch mints its own event_id, and deduplication is keyed on
+     * (event_name, event_id).
+     *
+     * Maho only. OpenMage runs session_write_close() before core_app_run_after
+     * dispatches, so the mark never reaches storage there and the claim is a
+     * no-op across requests. What actually stops the reload on both platforms
+     * is isHtmlPageResponse(): a reload of the success page is a redirect.
+     * This claim is the second line of defence, not the first.
+     */
+    protected function claimPurchaseReport($order): bool
+    {
+        $incrementId = $order ? (string) $order->getIncrementId() : '';
+        if ($incrementId === '') {
+            return false;
+        }
+
+        $session = Mage::getSingleton('checkout/session');
+        if ((string) $session->getData(self::SESSION_REPORTED_PURCHASE) === $incrementId) {
+            return false;
+        }
+        $session->setData(self::SESSION_REPORTED_PURCHASE, $incrementId);
+
+        return true;
+    }
+
+    /**
+     * Whether the response the visitor received is a rendered storefront page.
+     * A redirect, a JSON endpoint or an error page carries no reliable quote
+     * or order state: reporting from one duplicates events (a reloaded success
+     * page) or invents empty ones (checkout bouncing an empty cart back).
+     *
+     * The doctype sniff is case-insensitive ("<!DOCTYPE html" and the HTML5-
+     * canonical "<!doctype html>" both match) and covers every body segment.
+     * It used to read a leading window of the first segment only, which was
+     * survivable while it gated PageView alone; now that it gates every route
+     * event, a theme prefixing the body with a BOM, a comment or whitespace —
+     * or emitting the doctype from a later appendBody() segment — would
+     * silently stop all reporting.
      *
      * @param Mage_Core_Controller_Response_Http $response untyped because the
      *        concrete response class differs between OpenMage and Maho.
@@ -220,10 +305,10 @@ class Hirale_MetaConversions_Model_Observer
         }
         $body = $response->getBody(true);
         if (is_array($body)) {
-            $body = (string) reset($body);
+            $body = implode('', $body);
         }
 
-        return stripos(substr((string) $body, 0, 100), '<!doctype html') !== false;
+        return stripos((string) $body, '<!doctype html') !== false;
     }
 
     /**
@@ -419,18 +504,13 @@ class Hirale_MetaConversions_Model_Observer
      * consistent 2-decimal item price (the worker maps it via
      * Hirale_MetaConversions_Helper_Data::prepareContent).
      *
-     * sku/name are cast rather than type-hinted: Magento item getters can
-     * return null for edge entities (deleted-product references, custom quote
-     * items), and a TypeError here would escape the observer's safety net
-     * (addToQueue catches Exception, not Error) and break the storefront page.
+     * Magento item getters return null for edge entities (deleted-product
+     * references, custom quote items), so the nullable inputs are normalised
+     * to strings here rather than reaching Meta as nulls.
      *
-     * @param string|null $sku
-     * @param int|float|string $qty
-     * @param int|float|string $price
-     * @param string|null $name
      * @return array{0:string,1:int|float|string,2:float,3:string}
      */
-    protected function buildContentRow($sku, $qty, $price, $name): array
+    protected function buildContentRow(?string $sku, int|float|string $qty, int|float|string $price, ?string $name): array
     {
         return [(string) $sku, $qty, $this->helper->formatPrice($price), (string) $name];
     }

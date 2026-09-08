@@ -38,6 +38,10 @@ class Hirale_MetaConversions_Model_Api
         $pixelId = $helper->getPixelId($message->storeId);
 
         if ($accessToken === null || $pixelId === null) {
+            // Forced: a missing credential is a configuration fault, not
+            // debug noise. Gated on debugMode it went unlogged on exactly the
+            // stores that needed to see it — production, where the platform
+            // log switch is off — and the events vanished without a trace.
             Mage::log(
                 sprintf(
                     'Dropped %d CAPI event(s): access token or pixel id not configured for store %d.',
@@ -46,7 +50,7 @@ class Hirale_MetaConversions_Model_Api
                 ),
                 null,
                 self::LOG_FILE,
-                $message->debugMode,
+                true,
             );
             return;
         }

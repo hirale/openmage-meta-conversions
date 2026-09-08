@@ -309,4 +309,17 @@ class ApiTest extends TestCase
 
         return $response;
     }
+
+    public function testMissingCredentialsAreLoggedEvenOutsideDebugMode(): void
+    {
+        // No access token configured for store 1.
+        $api = new RecordingApi();
+        $api($this->message([$this->entry('AddToCart')], 1, false));
+
+        self::assertCount(1, \Mage::$logs);
+        self::assertStringContainsString('access token or pixel id not configured', (string) \Mage::$logs[0]['message']);
+        // Forced, or the platform log switch (off in production) swallows the
+        // one signal that a misconfigured store is dropping every event.
+        self::assertTrue(\Mage::$logs[0]['force']);
+    }
 }

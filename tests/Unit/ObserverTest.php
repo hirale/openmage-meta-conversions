@@ -11,6 +11,8 @@ use HiraleMetaConversions\Tests\Support\CheckoutSessionStub;
 use HiraleMetaConversions\Tests\Support\CookieStub;
 use HiraleMetaConversions\Tests\Support\CoreHelperStub;
 use HiraleMetaConversions\Tests\Support\CustomerStub;
+use HiraleMetaConversions\Tests\Support\OrderStub;
+use HiraleMetaConversions\Tests\Support\ThrowingHelperStub;
 use HiraleMetaConversions\Tests\Support\HttpHelperStub;
 use HiraleMetaConversions\Tests\Support\LayoutStub;
 use HiraleMetaConversions\Tests\Support\ProductStub;
@@ -325,7 +327,7 @@ class ObserverTest extends TestCase
         self::assertSame('PageView', $message->events[0]['event']['event_name']);
     }
 
-    public function testDispatchRouteEventIgnoresNonHtmlResponsesWithoutTouchingUserData(): void
+    public function testUnmappedRouteOnANonHtmlResponseBuildsNoUserData(): void
     {
         // Structural laziness assertion: prepareUserData() reads the
         // customer/session singleton, and the stubbed Mage::getSingleton()
@@ -453,6 +455,157 @@ class ObserverTest extends TestCase
 
         self::assertSame('', $data['content_category']);
     }
+    /** @param list<string> $bodySegments */
+    private function successRoute(int $statusCode = 200, array $bodySegments = ['<!DOCTYPE html><html></html>']): \Varien_Event_Observer
+    {
+        return $this->routeObserver('checkout', 'onepage', 'success', new ResponseStub($statusCode, $bodySegments));
+    }
+
+    private function sessionWithOrder(string $incrementId = '100000001'): CheckoutSessionStub
+    {
+        $session = new CheckoutSessionStub(new QuoteStub());
+        $session->lastRealOrder = new OrderStub($incrementId);
+        \Mage::$singletons['checkout/session'] = $session;
+
+        return $session;
+    }
+
+    /** @return list<string> */
+    private function dispatchedEventNames(int $dispatch = 0): array
+    {
+        return array_map(
+            static fn(array $entry): string => $entry['event']['event_name'],
+            \Hirale\Queue\Bus::$dispatches[$dispatch]['message']->events,
+        );
+    }
+
+    public function testReloadedSuccessPageReportsNothingAtAll(): void
+    {
+        // successAction redirects on the second hit, but the route is still
+        // checkout_onepage_success and last_real_order_id still resolves the
+        // order. Meta cannot absorb the duplicate: each dispatch mints its own
+        // event_id, and dedup is keyed on (event_name, event_id).
+        $session = $this->sessionWithOrder();
+
+        (new \Hirale_MetaConversions_Model_Observer())->dispatchRouteEvent($this->successRoute(302, ['']));
+
+        self::assertSame([], \Hirale\Queue\Bus::$dispatches);
+        self::assertNull(
+            $session->getData(\Hirale_MetaConversions_Model_Observer::SESSION_REPORTED_PURCHASE),
+            'the response guard must hold before the claim is ever consulted',
+        );
+        self::assertNull(\Mage::registry('hirale_meta_event_id_Purchase'));
+    }
+
+    public function testPurchaseIsReportedOnlyOncePerOrder(): void
+    {
+        $this->sessionWithOrder();
+        $observer = new \Hirale_MetaConversions_Model_Observer();
+
+        $observer->dispatchRouteEvent($this->successRoute());
+        $observer->dispatchRouteEvent($this->successRoute());
+
+        self::assertCount(2, \Hirale\Queue\Bus::$dispatches, 'both renders still report the page view');
+        self::assertSame(['Purchase', 'PageView'], $this->dispatchedEventNames(0));
+        self::assertSame(['PageView'], $this->dispatchedEventNames(1));
+    }
+
+    public function testPurchaseIsReportedAgainForADifferentOrder(): void
+    {
+        $session = $this->sessionWithOrder('100000001');
+        $observer = new \Hirale_MetaConversions_Model_Observer();
+        $observer->dispatchRouteEvent($this->successRoute());
+
+        $session->lastRealOrder = new OrderStub('100000002');
+        $observer->dispatchRouteEvent($this->successRoute());
+
+        self::assertSame(['Purchase', 'PageView'], $this->dispatchedEventNames(1));
+    }
+
+    public function testMappedRouteOnARedirectReportsNothing(): void
+    {
+        // An empty cart bounced back from checkout used to send an
+        // InitiateCheckout with a zero value and no contents.
+        \Mage::$singletons['checkout/session'] = new CheckoutSessionStub(new QuoteStub());
+
+        (new \Hirale_MetaConversions_Model_Observer())->dispatchRouteEvent(
+            $this->routeObserver('checkout', 'onepage', 'index', new ResponseStub(302, [''])),
+        );
+
+        self::assertSame([], \Hirale\Queue\Bus::$dispatches);
+    }
+
+    public function testMappedRouteOnANonHtml200ReportsNothing(): void
+    {
+        \Mage::$singletons['checkout/session'] = new CheckoutSessionStub(new QuoteStub());
+
+        (new \Hirale_MetaConversions_Model_Observer())->dispatchRouteEvent(
+            $this->routeObserver('checkout', 'cart', 'index', new ResponseStub(200, ['{"ok":true}'])),
+        );
+
+        self::assertSame([], \Hirale\Queue\Bus::$dispatches);
+    }
+
+    public function testDoctypeInALaterBodySegmentStillCountsAsARenderedPage(): void
+    {
+        // A BOM, a licence comment or a layout that appends the doctype in a
+        // second segment must not silence every event on the page.
+        \Mage::$singletons['checkout/session'] = new CheckoutSessionStub(new QuoteStub());
+
+        (new \Hirale_MetaConversions_Model_Observer())->dispatchRouteEvent($this->routeObserver(
+            'cms',
+            'index',
+            'index',
+            new ResponseStub(200, [str_repeat(' ', 200), '<!DOCTYPE html><html></html>']),
+        ));
+
+        self::assertCount(1, \Hirale\Queue\Bus::$dispatches);
+        self::assertSame(['PageView'], $this->dispatchedEventNames());
+    }
+
+    /**
+     * Analytics must never break the flow it observes: a payload-building
+     * failure is logged and dropped, never propagated into a cart save or a
+     * registration.
+     *
+     * @dataProvider guardedEntryPoints
+     */
+    public function testEntryPointSwallowsPayloadFailures(string $method, callable $eventFactory): void
+    {
+        \Mage::$helpers['metaconversions'] = new ThrowingHelperStub();
+        \Mage::$singletons['checkout/session'] = new CheckoutSessionStub(new QuoteStub());
+
+        (new \Hirale_MetaConversions_Model_Observer())->{$method}($eventFactory());
+
+        self::assertSame([], \Hirale\Queue\Bus::$dispatches);
+        self::assertCount(1, \Mage::$exceptions);
+        self::assertInstanceOf(\TypeError::class, \Mage::$exceptions[0]);
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: callable}>
+     */
+    public static function guardedEntryPoints(): array
+    {
+        return [
+            'addToCart' => ['addToCart', static fn(): \Varien_Event_Observer => new \Varien_Event_Observer(
+                new \Varien_Event(['item' => new CartItemStub(sku: 'SKU-1', name: 'Item One', qty: 1.0, basePrice: 10.0)]),
+            )],
+            'addToWishlist' => ['addToWishlist', static fn(): \Varien_Event_Observer => new \Varien_Event_Observer(
+                new \Varien_Event(['items' => [new WishlistItemStub(['store_id' => 1, 'qty' => 1.0, 'product' => new ProductStub('SKU-1', 10.0, 'Item One')])]]),
+            )],
+            'completeRegistration' => ['completeRegistration', static fn(): \Varien_Event_Observer => new \Varien_Event_Observer(
+                new \Varien_Event(['customer' => new CustomerStub()]),
+            )],
+            'dispatchRouteEvent' => ['dispatchRouteEvent', static fn(): \Varien_Event_Observer => new \Varien_Event_Observer(
+                new \Varien_Event(['app' => new RouteAppStub(
+                    new RequestStub('cms', 'index', 'index'),
+                    new ResponseStub(200, ['<!DOCTYPE html>']),
+                )]),
+            )],
+        ];
+    }
+
 }
 
 class ObserverAccessor extends \Hirale_MetaConversions_Model_Observer
