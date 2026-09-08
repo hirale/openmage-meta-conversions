@@ -80,6 +80,24 @@ composer require hirale/magento-module-installer hirale/queue hirale/openmage-me
 2. Generate an access token. See [https://developers.facebook.com/docs/marketing-api/conversions-api/get-started](https://developers.facebook.com/docs/marketing-api/conversions-api/get-started).
 3. Go to system config `System > Configuration > Sales > Meta API > Conversions API`. Insert the parameters from step 1, save.
 
+### Event reporting rules
+
+- Route events (`PageView`, `Purchase`, `InitiateCheckout`, `ViewCart`,
+  `ViewContent`, `Search`) are reported only from a rendered `200` HTML
+  response. A redirect, a JSON endpoint or an error page reports nothing — an
+  empty cart bounced back from checkout is not an `InitiateCheckout`.
+- `Purchase` is reported once per order. A reloaded success page returns a
+  redirect, which the rule above already stops; on Maho a mark on the checkout
+  session backs that up. **On OpenMage that mark is not persisted** — the
+  platform closes the session before `core_app_run_after` dispatches — so there
+  the redirect rule is the only thing preventing a duplicate. Meta cannot
+  absorb such a duplicate on its own: every dispatch mints its own `event_id`,
+  and deduplication is keyed on (`event_name`, `event_id`).
+- An observer that fails while building a payload logs and gives up. It never
+  interrupts the action it is measuring: a cart save, a registration.
+- A store with no access token or pixel id logs one line per dropped batch,
+  whether or not debug mode is on.
+
 ### Debug
 
 Enable Debug Mode in system config, then check `var/log/meta_conversions.log`.

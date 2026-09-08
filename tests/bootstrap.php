@@ -52,7 +52,7 @@ if (!class_exists('Mage')) {
 
         public static ?object $app = null;
 
-        /** @var list<array{message:mixed,level:mixed,file:string}> */
+        /** @var list<array{message:mixed,level:mixed,file:string,force:bool}> */
         public static array $logs = [];
 
         /** @var list<Throwable> */
@@ -137,7 +137,9 @@ if (!class_exists('Mage')) {
 
         public static function log($message, $level = null, string $file = '', bool $forceLog = false): void
         {
-            self::$logs[] = ['message' => $message, 'level' => $level, 'file' => $file];
+            // forceLog is recorded: on a real store it decides whether the
+            // entry survives the platform's log switch being off.
+            self::$logs[] = ['message' => $message, 'level' => $level, 'file' => $file, 'force' => $forceLog];
         }
 
         public static function logException(Throwable $e): void

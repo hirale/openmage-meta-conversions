@@ -357,11 +357,127 @@ class QuoteStub
 
 class CheckoutSessionStub
 {
+    public ?OrderStub $lastRealOrder = null;
+
+    /** @var array<string, mixed> */
+    public array $data = [];
+
     public function __construct(private ?object $quote = null) {}
 
     public function getQuote(): ?object
     {
         return $this->quote;
+    }
+
+    public function getLastRealOrder(): ?OrderStub
+    {
+        return $this->lastRealOrder;
+    }
+
+    /**
+     * @return mixed
+     */
+    public function getData(string $key)
+    {
+        return $this->data[$key] ?? null;
+    }
+
+    public function setData(string $key, $value): self
+    {
+        $this->data[$key] = $value;
+
+        return $this;
+    }
+}
+
+class OrderItemStub
+{
+    public function __construct(
+        private string $sku = 'SKU-1',
+        private string $name = 'Item One',
+        private float $qtyOrdered = 1.0,
+        private float $basePrice = 10.0,
+    ) {}
+
+    public function getSku(): string
+    {
+        return $this->sku;
+    }
+
+    public function getName(): string
+    {
+        return $this->name;
+    }
+
+    public function getQtyOrdered(): float
+    {
+        return $this->qtyOrdered;
+    }
+
+    public function getBasePrice(): float
+    {
+        return $this->basePrice;
+    }
+
+    public function getParentItem(): ?object
+    {
+        return null;
+    }
+}
+
+class OrderStub
+{
+    /** @param list<OrderItemStub> $items */
+    public function __construct(
+        private string $incrementId = '100000001',
+        private int $storeId = 1,
+        private float $baseGrandTotal = 10.0,
+        private float $totalQtyOrdered = 1.0,
+        private array $items = [],
+    ) {
+        if ($this->items === []) {
+            $this->items = [new OrderItemStub()];
+        }
+    }
+
+    public function getIncrementId(): string
+    {
+        return $this->incrementId;
+    }
+
+    public function getStoreId(): int
+    {
+        return $this->storeId;
+    }
+
+    public function getBaseGrandTotal(): float
+    {
+        return $this->baseGrandTotal;
+    }
+
+    public function getTotalQtyOrdered(): float
+    {
+        return $this->totalQtyOrdered;
+    }
+
+    /** @return list<OrderItemStub> */
+    public function getAllVisibleItems(): array
+    {
+        return $this->items;
+    }
+}
+
+/**
+ * Helper whose first call from any observer entry point explodes, so the
+ * guard around each entry point can be exercised without contriving a broken
+ * payload.
+ */
+class ThrowingHelperStub extends \Hirale_MetaConversions_Helper_Data
+{
+    #[\Override]
+    public function isConversionsEnabled(?int $storeId = null): bool
+    {
+        throw new \TypeError('observer payload build exploded');
     }
 }
 
