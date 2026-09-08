@@ -11,6 +11,8 @@ use HiraleMetaConversions\Tests\Support\CoreHelperStub;
 use HiraleMetaConversions\Tests\Support\CustomerStub;
 use HiraleMetaConversions\Tests\Support\HttpHelperStub;
 use HiraleMetaConversions\Tests\Support\UrlHelperStub;
+use Hirale\Queue\Bus;
+use Maho\Queue\QueueManager;
 use PHPUnit\Framework\TestCase;
 
 class HelperDataTest extends TestCase
@@ -18,6 +20,8 @@ class HelperDataTest extends TestCase
     protected function setUp(): void
     {
         \Mage::reset();
+        Bus::reset();
+        QueueManager::reset();
         \Mage::$helpers['core'] = new CoreHelperStub();
         \Mage::$helpers['core/http'] = new HttpHelperStub();
         \Mage::$helpers['core/url'] = new UrlHelperStub();
@@ -29,6 +33,8 @@ class HelperDataTest extends TestCase
     protected function tearDown(): void
     {
         \Mage::reset();
+        Bus::reset();
+        QueueManager::reset();
     }
 
     public function testIsConversionsEnabledReadsStoreScopedConfig(): void
@@ -302,5 +308,79 @@ class HelperDataTest extends TestCase
         self::assertSame('127.0.0.1', $data['client_ip_address']);
         self::assertSame('fb.1.aaa', $data['fbp']);
         self::assertSame('42', $data['external_id']);
+    }
+
+    public function testBridgePrefersMahoCoreQueueWhenTheModuleIsEnabled(): void
+    {
+        \Mage::$enabledModules['Maho_Queue'] = true;
+
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+
+        self::assertTrue($helper->isQueueEnabled());
+        self::assertTrue($helper->enqueueCapiEvents(
+            [['event' => ['event_name' => 'AddToCart'], 'custom_data' => null]],
+            ['client_ip_address' => '1.2.3.4'],
+            7,
+            false,
+        ));
+        self::assertCount(1, QueueManager::$dispatches);
+        self::assertSame([], Bus::$dispatches);
+
+        $call = QueueManager::$dispatches[0];
+        self::assertSame(\Hirale_MetaConversions_Helper_Data::QUEUE_ANALYTICS, $call['queue']);
+        self::assertNull($call['delaySeconds']);
+
+        $message = $call['message'];
+        self::assertInstanceOf(\Hirale_MetaConversions_Message_CapiEventMessage::class, $message);
+        self::assertSame('AddToCart', $message->events[0]['event']['event_name']);
+        self::assertSame(['client_ip_address' => '1.2.3.4'], $message->userData);
+        self::assertSame(7, $message->storeId);
+        self::assertFalse($message->debugMode);
+    }
+
+    public function testBridgeFallsBackToHiraleQueueWhenMahoQueueIsDisabled(): void
+    {
+        // The stubbed QueueManager class exists either way, so the module flag
+        // is what actually decides the branch.
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+
+        self::assertTrue($helper->isQueueEnabled());
+        self::assertTrue($helper->enqueueCapiEvents([['event' => ['event_name' => 'Purchase'], 'custom_data' => null]], [], 1, true));
+        self::assertCount(1, Bus::$dispatches);
+        self::assertSame([], QueueManager::$dispatches);
+
+        // hirale/queue routes by message class from its own config.xml.
+        self::assertSame('dispatch', Bus::$dispatches[0]['method']);
+        self::assertTrue(Bus::$dispatches[0]['message']->debugMode);
+    }
+
+    public function testBridgeReportsQueueUnavailableWithoutAnyBackend(): void
+    {
+        $helper = new class extends \Hirale_MetaConversions_Helper_Data {
+            #[\Override]
+            protected function _isHiraleQueueAvailable(): bool
+            {
+                return false;
+            }
+        };
+
+        self::assertFalse($helper->isQueueEnabled());
+        self::assertFalse($helper->enqueueCapiEvents([['event' => ['event_name' => 'ViewContent'], 'custom_data' => null]], [], 1, false));
+        self::assertSame([], Bus::$dispatches);
+        self::assertSame([], QueueManager::$dispatches);
+        // Silently declining is the point: no exception reaches the observer.
+        self::assertSame([], \Mage::$exceptions);
+    }
+
+    public function testDispatchFailureIsSwallowedAndLogged(): void
+    {
+        \Mage::$enabledModules['Maho_Queue'] = true;
+        QueueManager::$nextException = new \RuntimeException('queue table is gone');
+
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+
+        self::assertFalse($helper->enqueueCapiEvents([['event' => ['event_name' => 'Lead'], 'custom_data' => null]], [], 1, false));
+        self::assertCount(1, \Mage::$exceptions);
+        self::assertSame('queue table is gone', \Mage::$exceptions[0]->getMessage());
     }
 }

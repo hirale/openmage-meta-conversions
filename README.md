@@ -23,16 +23,46 @@ Mage::helper('metaconversions')->getEventId();
 
 You can check more events in the [events section](https://developers.facebook.com/docs/meta-pixel/reference#standard-events).
 
+## Queue backend
+
+Events are never posted from the request that generated them: the observer
+hands one message per request to a queue and a worker uploads the batch. There
+is no shared queue package any more — the module picks a backend at runtime, in
+this order:
+
+| Platform | Backend | Package to install |
+| --- | --- | --- |
+| Maho with the core `Maho_Queue` module | `\Maho\Queue\QueueManager` | none — it ships with the platform |
+| OpenMage | `\Hirale\Queue\Bus` | [`hirale/queue`](https://github.com/hirale/queue) `^3.0` |
+| Neither | — | events are not queued; the storefront is unaffected |
+
+`Maho_Queue` wins whenever it is present and enabled, even on a store that also
+has `hirale/queue` installed.
+
+Messages ride the `analytics` queue on both platforms. On Maho, `config.xml`
+routes that queue to the catch-all `slow` pool, so a CAPI upload — one outbound
+HTTP call that can block on Meta — never competes with the resident `fast` pool
+that carries order mail. A host can retarget it from its own `config.xml` or
+`local.xml`.
+
+> **3.0.0 is a breaking change.** `hirale/queue` moved from `require` to
+> `suggest`. OpenMage installs that upgrade from 2.x must require it
+> explicitly, or events stop being queued. Nothing else changes: the same
+> events, config paths and `analytics` queue name as before.
+
 ## Install
 
-Requires [`hirale/queue`](https://github.com/hirale/queue) `^3.0`
-(pulled in automatically).
-
-**Maho** (26.5+):
+**Maho** (26.5+, with core `Maho_Queue`):
 
 ```bash
 composer require hirale/openmage-meta-conversions
+composer dump-autoload
 ```
+
+`composer dump-autoload` is required: it compiles the
+`#[\Maho\Config\MessageHandler]` attribute into
+`vendor/composer/maho_attributes.php`. Without it the message has no registered
+handler, and the queue refuses to decode it.
 
 **OpenMage** (20.17+, PHP 8.3+) — one-time tweaks first; details in the
 [hirale/queue README](https://github.com/hirale/queue#openmage-one-time-composer-adjustments):
@@ -40,13 +70,13 @@ composer require hirale/openmage-meta-conversions
 ```bash
 composer config platform.php 8.3
 composer config allow-plugins.hirale/magento-module-installer true
-composer require hirale/magento-module-installer hirale/openmage-meta-conversions
+composer require hirale/magento-module-installer hirale/queue hirale/openmage-meta-conversions
 ```
 
 ## Usage
 
 ### Setup
-1. This module requires the [hirale/queue](https://github.com/hirale/queue) module — configure its backend first (System > Configuration > Hirale > Queue).
+1. Make sure a queue backend is configured and its worker is running (see [Queue backend](#queue-backend)) — on OpenMage that is `System > Configuration > Hirale > Queue`, on Maho the core queue needs no setup beyond a running worker.
 2. Generate an access token. See [https://developers.facebook.com/docs/marketing-api/conversions-api/get-started](https://developers.facebook.com/docs/marketing-api/conversions-api/get-started).
 3. Go to system config `System > Configuration > Sales > Meta API > Conversions API`. Insert the parameters from step 1, save.
 
@@ -57,6 +87,12 @@ Each processed queue message logs two entries: the event batch (envelopes +
 custom data — `user_data` is deliberately never written to logs, and PII is
 already SHA-256 hashed before it even reaches the queue) and the Graph API
 response.
+
+Permanent errors fail the queue job immediately and show up in the queue's
+failure list; transient errors retry with backoff. Permanent means a replay
+cannot succeed: an invalid or revoked access token, a missing permission, a
+duplicate post, or any other `4xx` from the Graph API. Rate limiting (Meta
+answers `400` for it), `5xx` and network failures retry.
 
 ```log
 2026-06-11T10:00:00+00:00 DEBUG (7): Array

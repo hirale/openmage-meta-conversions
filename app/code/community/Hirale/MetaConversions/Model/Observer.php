@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use Hirale\Queue\Bus;
 use Jaybizzle\CrawlerDetect\CrawlerDetect;
 
 class Hirale_MetaConversions_Model_Observer
@@ -289,6 +288,9 @@ class Hirale_MetaConversions_Model_Observer
      * message. The store id is carried in the payload so the worker resolves
      * access_token / pixel_id against the originating store.
      *
+     * The helper picks the queue backend; with none installed it declines
+     * quietly and the storefront request is unaffected.
+     *
      * @param list<array{event: array<string, mixed>, custom_data: array<string, mixed>|null}> $events
      * @param array<string, mixed> $userData
      */
@@ -299,12 +301,12 @@ class Hirale_MetaConversions_Model_Observer
         }
         try {
             $storeId = $this->resolveStoreId($storeId);
-            Bus::dispatch(new Hirale_MetaConversions_Message_CapiEventMessage(
-                events: $events,
-                userData: $userData,
-                storeId: $storeId,
-                debugMode: $this->helper->isDebugMode($storeId),
-            ));
+            $this->helper->enqueueCapiEvents(
+                $events,
+                $userData,
+                $storeId,
+                $this->helper->isDebugMode($storeId),
+            );
         } catch (Exception $e) {
             Mage::logException($e);
         }
