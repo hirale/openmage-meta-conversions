@@ -606,6 +606,43 @@ class ObserverTest extends TestCase
         ];
     }
 
+
+    public function testReservedEventIdReachesTheDispatchedEvent(): void
+    {
+        // The storefront template reserves the id and hands it to fbq(); the
+        // observer must attach that exact id, or Meta counts both events.
+        $reserved = \Mage::helper('metaconversions')->reserveEventId('ViewContent');
+        \Mage::register('current_product', new ProductStub('SKU-9', 12.5, 'Viewed Product'));
+        \Mage::$singletons['checkout/session'] = new CheckoutSessionStub(new QuoteStub());
+
+        (new \Hirale_MetaConversions_Model_Observer())->dispatchRouteEvent(
+            $this->routeObserver('catalog', 'product', 'view', new ResponseStub(200, ['<!DOCTYPE html>'])),
+        );
+
+        $events = \Hirale\Queue\Bus::$dispatches[0]['message']->events;
+        self::assertSame('ViewContent', $events[0]['event']['event_name']);
+        self::assertSame($reserved, $events[0]['event']['event_id']);
+        // PageView was not reserved, so it still gets a generated id.
+        self::assertSame('PageView', $events[1]['event']['event_name']);
+        self::assertNotSame($reserved, $events[1]['event']['event_id']);
+    }
+
+    public function testUnreservedEventsKeepTheirGeneratedIds(): void
+    {
+        \Mage::register('current_product', new ProductStub('SKU-9', 12.5, 'Viewed Product'));
+        \Mage::$singletons['checkout/session'] = new CheckoutSessionStub(new QuoteStub());
+
+        (new \Hirale_MetaConversions_Model_Observer())->dispatchRouteEvent(
+            $this->routeObserver('catalog', 'product', 'view', new ResponseStub(200, ['<!DOCTYPE html>'])),
+        );
+
+        $events = \Hirale\Queue\Bus::$dispatches[0]['message']->events;
+        foreach ($events as $entry) {
+            self::assertNotSame('', $entry['event']['event_id']);
+        }
+        self::assertNotSame($events[0]['event']['event_id'], $events[1]['event']['event_id']);
+    }
+
 }
 
 class ObserverAccessor extends \Hirale_MetaConversions_Model_Observer
