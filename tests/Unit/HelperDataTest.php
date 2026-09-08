@@ -383,4 +383,34 @@ class HelperDataTest extends TestCase
         self::assertCount(1, \Mage::$exceptions);
         self::assertSame('queue table is gone', \Mage::$exceptions[0]->getMessage());
     }
+
+    public function testReserveEventIdRegistersTheIdForTheObserverToReuse(): void
+    {
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+
+        $reserved = $helper->reserveEventId('ViewContent');
+
+        self::assertNotSame('', $reserved);
+        self::assertSame($reserved, \Mage::registry('hirale_meta_event_id_ViewContent'));
+        // The observer's read side must resolve to the very same id, or Meta
+        // counts the browser and server events separately.
+        self::assertSame($reserved, $helper->getEventId('ViewContent'));
+    }
+
+    public function testReserveEventIdIsIdempotentWithinOneRequest(): void
+    {
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+
+        self::assertSame($helper->reserveEventId('Purchase'), $helper->reserveEventId('Purchase'));
+    }
+
+    public function testReserveEventIdIsScopedToItsEventName(): void
+    {
+        $helper = new \Hirale_MetaConversions_Helper_Data();
+
+        $viewContent = $helper->reserveEventId('ViewContent');
+
+        self::assertNotSame($viewContent, $helper->getEventId('Purchase'));
+        self::assertNull(\Mage::registry('hirale_meta_event_id_Purchase'));
+    }
 }

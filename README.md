@@ -2,13 +2,25 @@
 
 A module for integrating [Meta Conversions API](https://developers.facebook.com/docs/marketing-api/conversions-api/get-started), sending events from server side.
 
-For duplicate events, you can consult this page [https://developers.facebook.com/docs/marketing-api/conversions-api/deduplicate-pixel-and-server-events](https://developers.facebook.com/docs/marketing-api/conversions-api/deduplicate-pixel-and-server-events)
+## Deduplicating against the browser Pixel
 
-If you are using javascript to send pixel events, You can get event_id like this.
+If the storefront also fires the Meta Pixel, the same action reaches Meta twice
+— once from the browser, once from this module. Meta collapses the pair only
+when both carry the **same** `event_id`, keyed on (`event_name`, `event_id`);
+see [Meta's guide](https://developers.facebook.com/docs/marketing-api/conversions-api/deduplicate-pixel-and-server-events).
+
+Reserve the id in the template that emits the Pixel call, and the observer
+attaches the same one to the queued server-side event:
 
 ``` php
-Mage::helper('metaconversions')->getEventId();
+<?php $eventId = Mage::helper('metaconversions')->reserveEventId('ViewContent'); ?>
+<script>
+    fbq('track', 'ViewContent', { /* ... */ }, { eventID: '<?php echo $eventId ?>' });
+</script>
 ```
+
+Reserve nothing and the module still works — it generates its own id — but Meta
+then counts the browser and server events separately.
 ## Supported Events
 
  - `AddToCart`

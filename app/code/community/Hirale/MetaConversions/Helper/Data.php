@@ -87,15 +87,41 @@ class Hirale_MetaConversions_Helper_Data extends Mage_Core_Helper_Abstract
     }
 
     /**
-     * Resolve the event_id to attach to the outgoing CAPI event.
+     * Mint the event_id for an event of this request and leave it where the
+     * observer will find it.
      *
-     * For Meta's Pixel↔CAPI deduplication the SAME event_id must be sent
-     * from both browser (fbq + { eventID }) and server. When the storefront
-     * Pixel template registers the id under
-     * `hirale_meta_event_id_<EventName>` before the observer fires, this
-     * helper returns it; otherwise it falls back to a server-generated
-     * uniqid, which is still useful for queue-side log dedup even though
-     * Meta cannot dedupe it against a different browser-side id.
+     * This is the storefront side of Meta's Pixel↔CAPI deduplication: the same
+     * event_id has to reach Meta twice, once from the browser as
+     * `fbq('track', '<EventName>', {...}, { eventID: '<id>' })` and once from
+     * the server. Call this in the template that emits the Pixel call, use the
+     * returned id there, and the observer will attach the same one to the
+     * queued CAPI event. Calling it twice for the same event name in one
+     * request returns the id already reserved.
+     *
+     * Without a reservation nothing breaks — the observer generates its own id
+     * — but Meta then sees the browser and server events as two distinct
+     * events and counts both.
+     */
+    public function reserveEventId(string $eventName): string
+    {
+        $key = self::REGISTRY_EVENT_ID_PREFIX . $eventName;
+        $reserved = Mage::registry($key);
+        if (is_string($reserved) && $reserved !== '') {
+            return $reserved;
+        }
+
+        $eventId = uniqid('', true);
+        Mage::register($key, $eventId, true);
+
+        return $eventId;
+    }
+
+    /**
+     * Read side of the same mechanism, used by the observer: return the id
+     * reserveEventId() left in the registry for this event name, or a fresh
+     * one when the storefront reserved none. A generated id is still useful
+     * for queue-side log dedup, but Meta cannot match it against a different
+     * browser-side id — see reserveEventId().
      */
     public function getEventId(?string $eventName = null): string
     {
